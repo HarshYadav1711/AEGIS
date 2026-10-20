@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
 ChatRole = Literal["system", "user", "assistant"]
 
@@ -40,6 +40,10 @@ class ChatMessage:
 class GenerationOptions:
     max_output_tokens: int = 1024
     temperature: float = 0.7
+    # Constrain the reply to this JSON schema (structured output) when the provider supports it.
+    json_schema: dict[str, Any] | None = None
+    # False asks a reasoning model to answer directly (short structured tasks); True keeps its default.
+    allow_reasoning: bool = True
 
 
 @dataclass(frozen=True)

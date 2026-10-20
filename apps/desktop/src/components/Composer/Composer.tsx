@@ -13,6 +13,8 @@ interface ComposerProps {
   error: ChatError | null;
   onSend: (content: string, model: string) => Promise<boolean>;
   onCancel: () => void;
+  /** Why the composer is paused by something other than a chat reply (e.g. an open file task). */
+  pausedReason?: string | null;
   ref?: Ref<HTMLTextAreaElement>;
 }
 
@@ -27,6 +29,7 @@ export function Composer({
   error,
   onSend,
   onCancel,
+  pausedReason = null,
   ref,
 }: ComposerProps) {
   const [draft, setDraft] = useState('');
@@ -52,6 +55,7 @@ export function Composer({
   let note: string;
   if (error) note = `${error.detail} (${error.code})`;
   else if (unavailableReason) note = unavailableReason;
+  else if (pausedReason) note = pausedReason;
   else if (busy) note = canCancel ? 'Generating a reply… you can stop it.' : 'Sending…';
   else note = 'Enter to send, Shift+Enter for a new line. Replies come from the selected local model.';
 
@@ -80,7 +84,7 @@ export function Composer({
         aria-invalid={tooLong || undefined}
       />
       <div className="composer__actions">
-        {busy ? (
+        {busy && !pausedReason ? (
           <button type="button" className="button" onClick={onCancel} disabled={!canCancel}>
             Stop
           </button>

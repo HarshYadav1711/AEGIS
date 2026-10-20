@@ -37,3 +37,8 @@ Python virtual environment; review them before any redistribution.
 | uvicorn | 0.54.0 | BSD-3-Clause | ASGI server |
 | pytest | 9.1.1 | MIT | Tests (dev only) |
 | httpx | 0.28.1 | BSD-3-Clause | Test client (dev only) |
+| langgraph | 1.2.16 | MIT | Phase 2 bounded plan/execute graphs (runtime) |
+| langchain-core | 1.6.12 (via langgraph) | MIT | LangGraph runtime dependency |
+| langgraph-checkpoint, langgraph-prebuilt, langgraph-sdk | 4.3.0, 1.1.1, 0.4.8 (via langgraph) | MIT | Installed with LangGraph; AEGIS uses no checkpointer, prebuilt agent or remote SDK |
+| langsmith | 0.14.11 (via langchain-core) | MIT | Installed transitively; tracing is off (no LANGSMITH_* variables reach the core, whose environment is allowlisted) |
+| Other transitive packages of langgraph (orjson, ormsgpack, PyYAML, tenacity, requests, urllib3, xxhash, zstandard, httpx2, websockets, ...) | see `requirements.lock.txt` | MIT / BSD / Apache-2.0; orjson MPL-2.0 AND (Apache-2.0 OR MIT) | Not used directly |

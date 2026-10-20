@@ -83,6 +83,92 @@ MIGRATIONS: tuple[Migration, ...] = (
             "CREATE INDEX conversations_updated ON conversations(updated_at DESC)",
         ),
     ),
+    Migration(
+        version=3,
+        name="file_task_journal",
+        statements=(
+            # One row per user request that was interpreted as a file-organization task.
+            # root_path is set only from the trusted folder picker (via Electron main).
+            """
+            CREATE TABLE file_tasks (
+                id                 TEXT PRIMARY KEY,
+                request_text       TEXT NOT NULL,
+                intent             TEXT NOT NULL CHECK (intent IN ('organize_by_type')),
+                intent_source      TEXT NOT NULL CHECK (intent_source IN ('model', 'keyword_fallback')),
+                intent_model       TEXT,
+                intent_detail      TEXT NOT NULL,
+                status             TEXT NOT NULL CHECK (status IN (
+                                       'awaiting_folder', 'planning', 'awaiting_approval', 'executing',
+                                       'completed', 'partial', 'failed', 'unknown', 'cancelled', 'rejected')),
+                root_path          TEXT,
+                root_identity      TEXT,
+                current_plan_id    TEXT,
+                approval_decision  TEXT CHECK (approval_decision IN ('approved', 'rejected')),
+                approval_plan_id   TEXT,
+                approval_at        TEXT,
+                cancel_requested   INTEGER NOT NULL DEFAULT 0,
+                error_code         TEXT,
+                error_detail       TEXT,
+                created_at         TEXT NOT NULL,
+                updated_at         TEXT NOT NULL,
+                started_at         TEXT,
+                finished_at        TEXT
+            )
+            """,
+            # Immutable once written: a re-plan creates a new row and supersedes the old one.
+            """
+            CREATE TABLE file_plans (
+                id            TEXT PRIMARY KEY,
+                task_id       TEXT NOT NULL REFERENCES file_tasks(id) ON DELETE CASCADE,
+                digest        TEXT NOT NULL,
+                status        TEXT NOT NULL CHECK (status IN (
+                                  'awaiting_approval', 'approved', 'rejected', 'superseded', 'cancelled')),
+                root_path     TEXT NOT NULL,
+                root_identity TEXT NOT NULL,
+                created_at    TEXT NOT NULL,
+                expires_at    TEXT NOT NULL
+            )
+            """,
+            # Planned operations and their execution journal. A 'move' is written as 'started'
+            # before the filesystem call, so a crash leaves evidence of what may have happened.
+            """
+            CREATE TABLE file_operations (
+                id            TEXT PRIMARY KEY,
+                plan_id       TEXT NOT NULL REFERENCES file_plans(id) ON DELETE CASCADE,
+                seq           INTEGER NOT NULL,
+                action        TEXT NOT NULL CHECK (action IN ('move', 'skip')),
+                source_name   TEXT NOT NULL,
+                category      TEXT,
+                dest_rel      TEXT,
+                size          INTEGER,
+                mtime_ns      INTEGER,
+                file_id       TEXT,
+                sha256        TEXT,
+                plan_reason   TEXT,
+                status        TEXT NOT NULL CHECK (status IN (
+                                  'planned', 'skipped', 'started', 'verified', 'failed', 'unknown', 'not_attempted')),
+                detail        TEXT,
+                verification  TEXT,
+                started_at    TEXT,
+                finished_at   TEXT,
+                UNIQUE (plan_id, seq)
+            )
+            """,
+            # Append-only audit trail of workflow events (no file contents).
+            """
+            CREATE TABLE file_task_events (
+                id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id  TEXT NOT NULL REFERENCES file_tasks(id) ON DELETE CASCADE,
+                at       TEXT NOT NULL,
+                kind     TEXT NOT NULL,
+                detail   TEXT NOT NULL
+            )
+            """,
+            "CREATE INDEX file_tasks_updated ON file_tasks(updated_at DESC)",
+            "CREATE INDEX file_plans_task ON file_plans(task_id)",
+            "CREATE INDEX file_task_events_task ON file_task_events(task_id, id)",
+        ),
+    ),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

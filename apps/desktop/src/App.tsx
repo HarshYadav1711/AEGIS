@@ -3,11 +3,14 @@ import { useEffect, useRef, useState } from 'react';
 import { Composer } from './components/Composer/Composer';
 import { ConversationList } from './components/ConversationList/ConversationList';
 import { Diagnostics } from './components/Diagnostics/Diagnostics';
+import { FileTaskHistory } from './components/FileTask/FileTaskHistory';
+import { FileTaskPanel } from './components/FileTask/FileTaskPanel';
 import { Orb } from './components/Orb/Orb';
 import { StatePreview } from './components/StatePreview/StatePreview';
 import { Transcript } from './components/Transcript/Transcript';
 import { useBackendStatus } from './hooks/useBackendStatus';
 import { useChat } from './hooks/useChat';
+import { useFileTasks } from './hooks/useFileTasks';
 import { useModelSelection } from './hooks/useModelSelection';
 import { useMotionPreference, type MotionPreference } from './hooks/useMotionPreference';
 import { ORB_LABELS, orbStateFor, type OrbState } from './orb/orbModel';
@@ -33,6 +36,7 @@ export function App() {
 
   const coreOnline = status?.state === 'online';
   const chat = useChat(coreOnline);
+  const tasks = useFileTasks(coreOnline);
   const availableModels = status?.health?.provider?.models ?? [];
   const [model, setModel] = useModelSelection(availableModels);
   const unavailableReason = chatUnavailableReason(status);
@@ -42,12 +46,20 @@ export function App() {
     window.aegis?.getAppInfo().then(setAppInfo, () => setAppInfo(null));
   }, []);
 
-  const liveState = orbStateFor(status, chat.activity, chatReady);
+  const liveState = orbStateFor(status, chat.activity, chatReady, tasks.activity);
   const orbState = preview ?? liveState;
   const canReconnect = status !== null && (status.state === 'offline' || status.state === 'error') && !!window.aegis;
 
   let liveDetail: string;
   if (status?.state !== 'online') liveDetail = status?.detail ?? 'Waiting for the desktop app to report backend status…';
+  else if (tasks.activity === 'interpreting') liveDetail = `Checking whether this is a file task (${model ?? 'keyword rules'}).`;
+  else if (tasks.activity === 'waiting_folder') liveDetail = 'Waiting for you to choose a folder.';
+  else if (tasks.activity === 'planning') liveDetail = 'Listing the chosen folder and preparing a plan.';
+  else if (tasks.activity === 'waiting_approval') liveDetail = 'Plan ready. Nothing moves until you approve it.';
+  else if (tasks.activity === 'executing') liveDetail = 'Moving approved files and verifying each one.';
+  else if (tasks.activity === 'succeeded') liveDetail = 'File task complete; every move was verified on disk.';
+  else if (tasks.activity === 'failed') liveDetail = 'The file task did not fully succeed. See the task for details.';
+  else if (tasks.activity === 'cancelled') liveDetail = 'The file task was cancelled or rejected.';
   else if (chat.activity === 'thinking') liveDetail = `Waiting for ${model ?? 'the model'} to respond.`;
   else if (chat.activity === 'responding') liveDetail = `${model ?? 'The model'} is writing a reply.`;
   else if (chat.activity === 'succeeded') liveDetail = 'Reply complete and saved.';
@@ -81,7 +93,7 @@ export function App() {
           }}
         />
 
-        <main className="stage" data-has-messages={chat.messages.length > 0 || undefined}>
+        <main className="stage" data-has-messages={chat.messages.length > 0 || tasks.detail !== null || undefined}>
           <Orb
             state={orbState}
             reducedMotion={motion.reduced}
@@ -97,17 +109,33 @@ export function App() {
               {restarting ? 'Reconnecting…' : 'Restart core'}
             </button>
           )}
-          <Transcript messages={chat.messages} loading={chat.loadingConversation} busy={chat.busy} />
+          {(chat.messages.length > 0 || chat.loadingConversation || !tasks.detail) && (
+            <Transcript messages={chat.messages} loading={chat.loadingConversation} busy={chat.busy} />
+          )}
+          <FileTaskPanel tasks={tasks} />
           <Composer
             ref={composerRef}
             unavailableReason={unavailableReason}
             models={availableModels}
             model={model}
             onModelChange={setModel}
-            busy={chat.busy}
+            busy={chat.busy || tasks.busy}
             canCancel={chat.canCancel}
+            pausedReason={
+              tasks.pending === 'interpreting'
+                ? 'Checking whether this is a file task…'
+                : tasks.busy
+                  ? 'Finish, reject or cancel the file task above to send another message.'
+                  : null
+            }
             error={chat.error}
-            onSend={chat.send}
+            onSend={async (content, selected) => {
+              // A file-organization request becomes a task; anything else is an ordinary chat turn.
+              const routed = await tasks.start(content, selected);
+              if (routed === 'task') return true;
+              if (routed === 'error') return false;
+              return chat.send(content, selected);
+            }}
             onCancel={chat.cancel}
           />
         </main>
@@ -115,6 +143,7 @@ export function App() {
 
       <footer className="drawer">
         <Diagnostics status={status} appInfo={appInfo} />
+        <FileTaskHistory tasks={tasks.history} disabled={tasks.busy} onOpen={tasks.open} />
         <details className="panel">
           <summary>Display</summary>
           <div className="preview-controls">

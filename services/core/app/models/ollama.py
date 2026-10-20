@@ -135,7 +135,11 @@ class OllamaAdapter:
             "stream": True,
             "options": {"num_predict": options.max_output_tokens, "temperature": options.temperature},
         }
-        if model in self._thinking_models:
+        if options.json_schema is not None:
+            body["format"] = options.json_schema
+        if model in self._thinking_models and not options.allow_reasoning:
+            body["think"] = False
+        elif model in self._thinking_models:
             # Some reasoning models cannot switch reasoning off (with think=false it leaks into the
             # answer). Ask Ollama to return it separately; the trace is discarded, never shown or stored.
             body["think"] = True

@@ -12,6 +12,10 @@ import type {
   ChatResult,
   ConversationDetail,
   ConversationSummary,
+  FileInterpretation,
+  FileTaskDetail,
+  FileTaskProgressEvent,
+  FileTaskRecord,
   IpcChannel,
 } from '../src/shared/contracts';
 
@@ -26,6 +30,15 @@ const channels = {
   send: 'aegis:chat:send',
   cancel: 'aegis:chat:cancel',
   chatEvent: 'aegis:chat:event',
+  filesInterpret: 'aegis:files:interpret',
+  filesChooseFolder: 'aegis:files:choose-folder',
+  filesGetTask: 'aegis:files:get-task',
+  filesListTasks: 'aegis:files:list-tasks',
+  filesApprove: 'aegis:files:approve',
+  filesReject: 'aegis:files:reject',
+  filesCancel: 'aegis:files:cancel',
+  filesReplan: 'aegis:files:replan',
+  filesEvent: 'aegis:files:event',
 } as const satisfies Record<string, IpcChannel>;
 
 /** Subscribe without ever handing the renderer the IpcRendererEvent (which exposes `sender`). */
@@ -50,6 +63,17 @@ const bridge: AegisBridge = {
   sendMessage: (args) => ipcRenderer.invoke(channels.send, args) as Promise<ChatOutcome>,
   cancelGeneration: (id) => ipcRenderer.invoke(channels.cancel, id) as Promise<ChatResult<ChatMessageRecord>>,
   onChatEvent: (listener) => subscribe<ChatProgressEvent>(channels.chatEvent, listener),
+  interpretFileRequest: (args) =>
+    ipcRenderer.invoke(channels.filesInterpret, args) as Promise<ChatResult<FileInterpretation>>,
+  chooseFolderForTask: (taskId) =>
+    ipcRenderer.invoke(channels.filesChooseFolder, taskId) as Promise<ChatResult<FileTaskDetail | null>>,
+  getFileTask: (taskId) => ipcRenderer.invoke(channels.filesGetTask, taskId) as Promise<ChatResult<FileTaskDetail>>,
+  listFileTasks: () => ipcRenderer.invoke(channels.filesListTasks) as Promise<ChatResult<FileTaskRecord[]>>,
+  approveFilePlan: (args) => ipcRenderer.invoke(channels.filesApprove, args) as Promise<ChatResult<FileTaskDetail>>,
+  rejectFilePlan: (args) => ipcRenderer.invoke(channels.filesReject, args) as Promise<ChatResult<FileTaskDetail>>,
+  cancelFileTask: (taskId) => ipcRenderer.invoke(channels.filesCancel, taskId) as Promise<ChatResult<FileTaskDetail>>,
+  replanFileTask: (taskId) => ipcRenderer.invoke(channels.filesReplan, taskId) as Promise<ChatResult<FileTaskDetail>>,
+  onFileTaskEvent: (listener) => subscribe<FileTaskProgressEvent>(channels.filesEvent, listener),
 };
 
 contextBridge.exposeInMainWorld('aegis', Object.freeze(bridge));

@@ -40,13 +40,17 @@ export const ORB_STATES: readonly OrbState[] = [
 ];
 
 /**
- * States that real Phase 1 events can produce (backend lifecycle + conversation
- * requests). Everything else is reachable only through the labelled preview.
+ * States that real events can produce (backend lifecycle, conversation requests
+ * and Phase 2 file tasks). Everything else is reachable only through the
+ * labelled preview.
  */
 export const LIVE_ORB_STATES: readonly OrbState[] = [
   'connecting',
   'idle',
   'thinking',
+  'planning',
+  'waiting_approval',
+  'executing',
   'responding',
   'succeeded',
   'cancelled',
@@ -61,6 +65,37 @@ export const LIVE_ORB_STATES: readonly OrbState[] = [
  * succeeded / failed / cancelled — the terminal status the core persisted
  */
 export type ChatActivity = 'none' | 'thinking' | 'responding' | 'succeeded' | 'failed' | 'cancelled';
+
+/**
+ * What the current file task is doing, from real IPC responses and the core's journal:
+ * interpreting     — the request is being classified (model call in flight)
+ * waiting_folder   — waiting for the user to pick a folder in the native picker
+ * planning         — the core is listing the folder and building the plan
+ * waiting_approval — the plan is shown and waits for Approve / Reject
+ * executing        — the core reports the approved plan as executing
+ * succeeded / failed / cancelled — the terminal status the core recorded
+ */
+export type TaskActivity =
+  | 'none'
+  | 'interpreting'
+  | 'waiting_folder'
+  | 'planning'
+  | 'waiting_approval'
+  | 'executing'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled';
+
+const FROM_TASK: Record<Exclude<TaskActivity, 'none'>, OrbState> = {
+  interpreting: 'thinking',
+  waiting_folder: 'waiting_approval',
+  planning: 'planning',
+  waiting_approval: 'waiting_approval',
+  executing: 'executing',
+  succeeded: 'succeeded',
+  failed: 'error',
+  cancelled: 'cancelled',
+};
 
 const FROM_BACKEND: Record<BackendState, OrbState> = {
   starting: 'connecting',
@@ -84,12 +119,18 @@ const FROM_ACTIVITY: Record<Exclude<ChatActivity, 'none'>, OrbState> = {
 
 /**
  * Live orb state. Backend problems win (an unreachable core is never shown as
- * busy); otherwise the request activity; otherwise `idle` only when a model is
- * actually ready to answer.
+ * busy); then an active file task; then the chat request activity; otherwise
+ * `idle` only when a model is actually ready to answer.
  */
-export function orbStateFor(status: BackendStatus | null, activity: ChatActivity, chatReady: boolean): OrbState {
+export function orbStateFor(
+  status: BackendStatus | null,
+  activity: ChatActivity,
+  chatReady: boolean,
+  task: TaskActivity = 'none',
+): OrbState {
   const backend = orbStateFromBackend(status);
   if (backend !== 'idle') return backend;
+  if (task !== 'none') return FROM_TASK[task];
   if (activity !== 'none') return FROM_ACTIVITY[activity];
   return chatReady ? 'idle' : 'error';
 }

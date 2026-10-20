@@ -12,7 +12,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.agents.chat import GenerationManager
-from app.api import chat, health
+from app.agents.file_agent import FileTaskManager, recover_interrupted
+from app.api import chat, file_tasks, health
 from app.api.security import LocalAuthMiddleware
 from app.config import Settings
 from app.memory import conversations, db
@@ -53,6 +54,13 @@ def create_app(settings: Settings, adapter: ModelAdapter | None = None) -> FastA
             if recovered:
                 log.warning("marked %d interrupted reply(ies) from a previous run as failed", recovered)
             app.state.generations = GenerationManager(settings.database_path, model_adapter)
+            reconciled = recover_interrupted(settings.database_path)
+            if reconciled:
+                log.warning("reconciled %d file task(s) interrupted by a previous shutdown", reconciled)
+            # The app's own data folder can never be chosen as (or inside) an organize scope.
+            app.state.file_tasks = FileTaskManager(
+                settings.database_path, model_adapter, protected=(settings.data_dir,)
+            )
         except Exception:
             # Keep serving so /health can report the failure instead of the app vanishing.
             log.exception("database initialisation failed")
@@ -63,6 +71,8 @@ def create_app(settings: Settings, adapter: ModelAdapter | None = None) -> FastA
         yield
         log.info("core shutting down")
         monitor.cancel()
+        if app.state.file_tasks is not None:
+            await app.state.file_tasks.shutdown()
         if app.state.generations is not None:
             await app.state.generations.shutdown()
         # Bounded: a provider call stuck in the OS must not keep the core alive after shutdown.
@@ -83,10 +93,12 @@ def create_app(settings: Settings, adapter: ModelAdapter | None = None) -> FastA
     app.state.adapter = model_adapter
     app.state.database_init = None
     app.state.generations = None
+    app.state.file_tasks = None
     app.state.provider_health = None
     app.state.started_monotonic = time.monotonic()
     app.include_router(health.router)
     app.include_router(chat.router)
+    app.include_router(file_tasks.router)
     app.add_middleware(LocalAuthMiddleware, token=settings.session_token)
 
     @app.middleware("http")

@@ -1,4 +1,4 @@
-"""Schema v2 (conversations): upgrade from a Phase 0 database and database-level invariants."""
+"""Schema upgrades from a Phase 0 database and conversation-table invariants."""
 
 from __future__ import annotations
 
@@ -35,18 +35,18 @@ def test_phase0_database_upgrades_in_place(tmp_path: Path) -> None:
     conn.close()
 
     status = db.initialize(path)
-    assert status.ok and status.schema_version == 2
+    assert status.ok and status.schema_version == db.LATEST_SCHEMA_VERSION
 
     conn = sqlite3.connect(path)
     try:
-        assert [r[0] for r in conn.execute("SELECT version FROM schema_migrations ORDER BY version")] == [1, 2]
+        assert [r[0] for r in conn.execute("SELECT version FROM schema_migrations ORDER BY version")] == [m.version for m in db.MIGRATIONS]
         assert conn.execute("SELECT value FROM app_meta WHERE key = 'created_at'").fetchone()[0] == created_before
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-        assert {"app_meta", "conversations", "messages"} <= tables
+        assert {"app_meta", "conversations", "messages", "file_tasks", "file_plans", "file_operations"} <= tables
     finally:
         conn.close()
     # Re-running is a no-op.
-    assert db.initialize(path).schema_version == 2
+    assert db.initialize(path).schema_version == db.LATEST_SCHEMA_VERSION
 
 
 @pytest.fixture

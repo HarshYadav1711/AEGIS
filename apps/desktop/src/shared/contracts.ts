@@ -15,7 +15,16 @@ export type IpcChannel =
   | 'aegis:chat:get-conversation'
   | 'aegis:chat:send'
   | 'aegis:chat:cancel'
-  | 'aegis:chat:event';
+  | 'aegis:chat:event'
+  | 'aegis:files:interpret'
+  | 'aegis:files:choose-folder'
+  | 'aegis:files:get-task'
+  | 'aegis:files:list-tasks'
+  | 'aegis:files:approve'
+  | 'aegis:files:reject'
+  | 'aegis:files:cancel'
+  | 'aegis:files:replan'
+  | 'aegis:files:event';
 
 /**
  * Lifecycle of the local Python core as observed by Electron main.
@@ -167,6 +176,16 @@ export interface AegisBridge {
   sendMessage(args: SendMessageArgs): Promise<ChatOutcome>;
   cancelGeneration(messageId: string): Promise<ChatResult<ChatMessageRecord>>;
   onChatEvent(listener: (event: ChatProgressEvent) => void): () => void;
+  interpretFileRequest(args: InterpretFileRequestArgs): Promise<ChatResult<FileInterpretation>>;
+  /** Opens the native folder picker in Electron main; the renderer never supplies a path. */
+  chooseFolderForTask(taskId: string): Promise<ChatResult<FileTaskDetail | null>>;
+  getFileTask(taskId: string): Promise<ChatResult<FileTaskDetail>>;
+  listFileTasks(): Promise<ChatResult<FileTaskRecord[]>>;
+  approveFilePlan(args: FilePlanDecisionArgs): Promise<ChatResult<FileTaskDetail>>;
+  rejectFilePlan(args: FilePlanDecisionArgs): Promise<ChatResult<FileTaskDetail>>;
+  cancelFileTask(taskId: string): Promise<ChatResult<FileTaskDetail>>;
+  replanFileTask(taskId: string): Promise<ChatResult<FileTaskDetail>>;
+  onFileTaskEvent(listener: (event: FileTaskProgressEvent) => void): () => void;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -408,4 +427,273 @@ export function isChatProgressEvent(value: unknown): value is ChatProgressEvent 
     default:
       return false;
   }
+}
+
+// ---------------------------------------------------------------------------
+// File-organization task contracts (Phase 2)
+// ---------------------------------------------------------------------------
+
+export type FileTaskStatus =
+  | 'awaiting_folder'
+  | 'planning'
+  | 'awaiting_approval'
+  | 'executing'
+  | 'completed'
+  | 'partial'
+  | 'failed'
+  | 'unknown'
+  | 'cancelled'
+  | 'rejected';
+
+export const FILE_TASK_STATUSES: readonly FileTaskStatus[] = [
+  'awaiting_folder',
+  'planning',
+  'awaiting_approval',
+  'executing',
+  'completed',
+  'partial',
+  'failed',
+  'unknown',
+  'cancelled',
+  'rejected',
+];
+export const TERMINAL_FILE_TASK_STATUSES: readonly FileTaskStatus[] = [
+  'completed',
+  'partial',
+  'failed',
+  'unknown',
+  'cancelled',
+  'rejected',
+];
+
+export type FileOperationStatus =
+  | 'planned'
+  | 'skipped'
+  | 'started'
+  | 'verified'
+  | 'failed'
+  | 'unknown'
+  | 'not_attempted';
+const FILE_OPERATION_STATUSES: readonly FileOperationStatus[] = [
+  'planned',
+  'skipped',
+  'started',
+  'verified',
+  'failed',
+  'unknown',
+  'not_attempted',
+];
+
+export interface FileTaskRecord {
+  id: string;
+  /** The user's own request text (untrusted; render as plain text). */
+  requestText: string;
+  intentSource: 'model' | 'keyword_fallback';
+  intentModel: string | null;
+  intentDetail: string;
+  status: FileTaskStatus;
+  rootPath: string | null;
+  currentPlanId: string | null;
+  approvalDecision: 'approved' | 'rejected' | null;
+  approvalAt: string | null;
+  cancelRequested: boolean;
+  errorCode: string | null;
+  errorDetail: string | null;
+  createdAt: string;
+  updatedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+
+/** The plan digest stays in Electron main; the renderer approves by plan id only. */
+export interface FilePlanRecord {
+  id: string;
+  status: string;
+  rootPath: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface FileOperationRecord {
+  id: string;
+  seq: number;
+  action: 'move' | 'skip';
+  sourceName: string;
+  category: string | null;
+  destRel: string | null;
+  size: number | null;
+  sha256: string | null;
+  planReason: string | null;
+  status: FileOperationStatus;
+  detail: string | null;
+  /** Observed checks after the move (true/false), or null when a check was not applicable. */
+  verification: Record<string, boolean | null> | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+
+export interface FileTaskEventRecord {
+  id: number;
+  at: string;
+  kind: string;
+  detail: string;
+}
+
+export interface FileTaskDetail {
+  task: FileTaskRecord;
+  plan: FilePlanRecord | null;
+  operations: FileOperationRecord[];
+  events: FileTaskEventRecord[];
+}
+
+export interface FileInterpretation {
+  intent: 'organize_by_type' | 'none';
+  source: 'prefilter' | 'model' | 'keyword_fallback';
+  model: string | null;
+  detail: string;
+  task: FileTaskDetail | null;
+}
+
+export interface InterpretFileRequestArgs {
+  text: string;
+  model: string | null;
+}
+
+export interface FilePlanDecisionArgs {
+  taskId: string;
+  planId: string;
+}
+
+/** Pushed by main on 'aegis:files:event': the folder picker closed with a choice and planning began. */
+export interface FileTaskProgressEvent {
+  type: 'planning';
+  taskId: string;
+}
+
+export const MAX_FILE_REQUEST_CHARS = 2000;
+
+function isVerificationRecord(value: unknown): value is Record<string, boolean | null> | null {
+  return value === null || (isRecord(value) && Object.values(value).every((v) => v === null || typeof v === 'boolean'));
+}
+
+export function parseFileTask(value: unknown): FileTaskRecord | null {
+  if (!isRecord(value)) return null;
+  const v = value;
+  if (!isUuid(v.id) || typeof v.request_text !== 'string' || typeof v.intent_detail !== 'string') return null;
+  if (v.intent_source !== 'model' && v.intent_source !== 'keyword_fallback') return null;
+  if (typeof v.status !== 'string' || !(FILE_TASK_STATUSES as readonly string[]).includes(v.status)) return null;
+  if (v.approval_decision !== null && v.approval_decision !== 'approved' && v.approval_decision !== 'rejected') {
+    return null;
+  }
+  if (v.current_plan_id !== null && !isUuid(v.current_plan_id)) return null;
+  const strings = [v.intent_model, v.root_path, v.approval_at, v.error_code, v.error_detail, v.started_at, v.finished_at];
+  if (!strings.every(isNullableString)) return null;
+  if (typeof v.created_at !== 'string' || typeof v.updated_at !== 'string') return null;
+  if (v.cancel_requested !== 0 && v.cancel_requested !== 1) return null;
+  return {
+    id: v.id,
+    requestText: v.request_text,
+    intentSource: v.intent_source,
+    intentModel: v.intent_model as string | null,
+    intentDetail: v.intent_detail,
+    status: v.status as FileTaskStatus,
+    rootPath: v.root_path as string | null,
+    currentPlanId: v.current_plan_id as string | null,
+    approvalDecision: v.approval_decision as 'approved' | 'rejected' | null,
+    approvalAt: v.approval_at as string | null,
+    cancelRequested: v.cancel_requested === 1,
+    errorCode: v.error_code as string | null,
+    errorDetail: v.error_detail as string | null,
+    createdAt: v.created_at,
+    updatedAt: v.updated_at,
+    startedAt: v.started_at as string | null,
+    finishedAt: v.finished_at as string | null,
+  };
+}
+
+function parseFileOperation(value: unknown): FileOperationRecord | null {
+  if (!isRecord(value)) return null;
+  const v = value;
+  if (!isUuid(v.id) || typeof v.seq !== 'number' || !Number.isInteger(v.seq) || v.seq < 1) return null;
+  if (v.action !== 'move' && v.action !== 'skip') return null;
+  if (typeof v.source_name !== 'string' || v.source_name.length === 0) return null;
+  if (typeof v.status !== 'string' || !(FILE_OPERATION_STATUSES as readonly string[]).includes(v.status)) return null;
+  const strings = [v.category, v.dest_rel, v.sha256, v.plan_reason, v.detail, v.started_at, v.finished_at];
+  if (!strings.every(isNullableString) || !isNullableInt(v.size)) return null;
+  if (!isVerificationRecord(v.verification)) return null;
+  return {
+    id: v.id,
+    seq: v.seq,
+    action: v.action,
+    sourceName: v.source_name,
+    category: v.category as string | null,
+    destRel: v.dest_rel as string | null,
+    size: v.size as number | null,
+    sha256: v.sha256 as string | null,
+    planReason: v.plan_reason as string | null,
+    status: v.status as FileOperationStatus,
+    detail: v.detail as string | null,
+    verification: v.verification,
+    startedAt: v.started_at as string | null,
+    finishedAt: v.finished_at as string | null,
+  };
+}
+
+function parseFileEvent(value: unknown): FileTaskEventRecord | null {
+  if (!isRecord(value)) return null;
+  const { id, at, kind, detail } = value;
+  if (typeof id !== 'number' || !Number.isInteger(id) || typeof at !== 'string') return null;
+  if (typeof kind !== 'string' || typeof detail !== 'string') return null;
+  return { id, at, kind, detail };
+}
+
+const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
+
+/** Main-process parse: the renderer-safe detail plus the plan digest that only main keeps. */
+export function parseFileTaskDetailWithDigest(
+  value: unknown,
+): { detail: FileTaskDetail; digest: string | null } | null {
+  if (!isRecord(value)) return null;
+  const task = parseFileTask(value.task);
+  const operations = parseAll(value.operations, parseFileOperation);
+  const events = parseAll(value.events, parseFileEvent);
+  if (!task || !operations || !events) return null;
+  let plan: FilePlanRecord | null = null;
+  let digest: string | null = null;
+  if (value.plan !== null) {
+    const p = value.plan;
+    if (!isRecord(p) || !isUuid(p.id) || p.task_id !== task.id) return null;
+    if (typeof p.digest !== 'string' || !DIGEST_PATTERN.test(p.digest)) return null;
+    if (typeof p.status !== 'string' || typeof p.root_path !== 'string') return null;
+    if (typeof p.created_at !== 'string' || typeof p.expires_at !== 'string') return null;
+    plan = { id: p.id, status: p.status, rootPath: p.root_path, createdAt: p.created_at, expiresAt: p.expires_at };
+    digest = p.digest;
+  }
+  return { detail: { task, plan, operations, events }, digest };
+}
+
+export function parseFileTaskList(value: unknown): FileTaskRecord[] | null {
+  return isRecord(value) ? parseAll(value.tasks, parseFileTask) : null;
+}
+
+/** Validate renderer-supplied interpret arguments. */
+export function parseInterpretArgs(value: unknown): InterpretFileRequestArgs | null {
+  if (!isRecord(value)) return null;
+  if (Object.keys(value).sort().join(',') !== 'model,text') return null;
+  const { text, model } = value;
+  if (typeof text !== 'string' || text.trim().length === 0 || text.length > MAX_FILE_REQUEST_CHARS) return null;
+  if (model !== null && (typeof model !== 'string' || !MODEL_PATTERN.test(model))) return null;
+  return { text, model };
+}
+
+/** Validate renderer-supplied approve/reject arguments: ids only, never paths or digests. */
+export function parsePlanDecisionArgs(value: unknown): FilePlanDecisionArgs | null {
+  if (!isRecord(value)) return null;
+  if (Object.keys(value).sort().join(',') !== 'planId,taskId') return null;
+  const { taskId, planId } = value;
+  return isUuid(taskId) && isUuid(planId) ? { taskId, planId } : null;
+}
+
+export function isFileTaskProgressEvent(value: unknown): value is FileTaskProgressEvent {
+  return isRecord(value) && value.type === 'planning' && isUuid(value.taskId);
 }

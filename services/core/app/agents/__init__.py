@@ -1,1 +1,1 @@
-"""Agent runtime. Phase 1: a single bounded chat turn (ADR-003); LangGraph arrives with Phase 2 tools."""
+"""Agent runtime: a bounded chat turn (chat.py) and the LangGraph file-organization workflow (file_agent.py)."""

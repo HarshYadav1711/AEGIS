@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url';
 
 import { BackendManager, resolveBackendPaths } from './backend';
 import { ChatService } from './chat';
+import { FileTaskService } from './files';
 import { registerIpc } from './ipc';
 import { createRendererLocation, installAppHardening } from './security';
 import { runSmokeTest } from './smoke';
@@ -56,7 +57,8 @@ async function bootstrap(): Promise<void> {
 
   const backend = new BackendManager(resolveBackendPaths(repoRoot, app.getPath('userData')));
   const chat = new ChatService(backend);
-  registerIpc(backend, chat, appWindow, location);
+  const files = new FileTaskService(backend);
+  registerIpc(backend, chat, files, appWindow, location);
 
   let quitting = false;
   app.on('before-quit', (event) => {

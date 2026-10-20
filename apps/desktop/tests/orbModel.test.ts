@@ -73,8 +73,27 @@ test('text output is distinct from audio and audio stays unreachable', () => {
   const activities = ['none', 'thinking', 'responding', 'succeeded', 'failed', 'cancelled'] as const;
   const reachable = new Set(activities.flatMap((a) => [orbStateFor(online, a, true), orbStateFor(online, a, false)]));
   for (const state of reachable) assert.ok(LIVE_ORB_STATES.includes(state), state);
-  for (const notYet of ['speaking', 'listening', 'executing', 'planning', 'waiting_approval'] as const) {
+  for (const notYet of ['speaking', 'listening'] as const) {
     assert.ok(!reachable.has(notYet), notYet);
     assert.ok(!LIVE_ORB_STATES.includes(notYet), notYet);
   }
+  // Chat alone never claims tool activity; those states come only from file-task events.
+  for (const toolState of ['executing', 'planning', 'waiting_approval'] as const) assert.ok(!reachable.has(toolState));
+});
+
+test('file-task activity drives planning, approval and execution states', () => {
+  assert.equal(orbStateFor(online, 'none', true, 'interpreting'), 'thinking');
+  assert.equal(orbStateFor(online, 'none', true, 'waiting_folder'), 'waiting_approval');
+  assert.equal(orbStateFor(online, 'none', true, 'planning'), 'planning');
+  assert.equal(orbStateFor(online, 'none', true, 'waiting_approval'), 'waiting_approval');
+  assert.equal(orbStateFor(online, 'none', true, 'executing'), 'executing');
+  assert.equal(orbStateFor(online, 'none', true, 'succeeded'), 'succeeded');
+  assert.equal(orbStateFor(online, 'none', true, 'failed'), 'error');
+  assert.equal(orbStateFor(online, 'none', true, 'cancelled'), 'cancelled');
+  // A dead core is never shown as executing.
+  assert.equal(orbStateFor(status('offline'), 'none', true, 'executing'), 'offline');
+  const activities = [
+    'interpreting', 'waiting_folder', 'planning', 'waiting_approval', 'executing', 'succeeded', 'failed', 'cancelled',
+  ] as const;
+  for (const a of activities) assert.ok(LIVE_ORB_STATES.includes(orbStateFor(online, 'none', true, a)), a);
 });

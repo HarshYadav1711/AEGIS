@@ -76,14 +76,23 @@ export async function runSmokeTest(window: BrowserWindow, backend: BackendManage
     record('renderer has no require()', probe.require === 'undefined', probe.require);
     record('renderer has no process', probe.process === 'undefined', probe.process);
     const expectedKeys = [
+      'approveFilePlan',
+      'cancelFileTask',
       'cancelGeneration',
+      'chooseFolderForTask',
       'createConversation',
       'getAppInfo',
       'getBackendStatus',
       'getConversation',
+      'getFileTask',
+      'interpretFileRequest',
       'listConversations',
+      'listFileTasks',
       'onBackendStatus',
       'onChatEvent',
+      'onFileTaskEvent',
+      'rejectFilePlan',
+      'replanFileTask',
       'restartBackend',
       'sendMessage',
     ];
@@ -123,6 +132,47 @@ export async function runSmokeTest(window: BrowserWindow, backend: BackendManage
       return out;
     })()`);
     record('malformed chat IPC arguments are rejected in main', rejected.every((r) => r === 'rejected'), rejected.join(','));
+
+    // File IPC accepts ids only: no channel lets the renderer name a folder, a digest or an approval flag.
+    const fileRejected = await evaluate<string[]>(`(async () => {
+      const out = [];
+      const id = crypto.randomUUID();
+      const attempts = [
+        () => window.aegis.chooseFolderForTask('C:/Windows'),
+        () => window.aegis.approveFilePlan({ taskId: id, planId: id, planDigest: '0'.repeat(64) }),
+        () => window.aegis.approveFilePlan({ taskId: id, planId: id, approved: true }),
+        () => window.aegis.interpretFileRequest({ text: 'organize files', model: null, rootPath: 'C:/' }),
+        () => window.aegis.getFileTask('../../etc'),
+      ];
+      for (const attempt of attempts) {
+        try { await attempt(); out.push('accepted'); } catch { out.push('rejected'); }
+      }
+      return out;
+    })()`);
+    record(
+      'malformed file IPC arguments (paths, digests, approval flags) are rejected',
+      fileRejected.every((r) => r === 'rejected'),
+      fileRejected.join(','),
+    );
+    const unknownPlan = await evaluate<{ ok: boolean; code?: string }>(`(async () => {
+      const id = crypto.randomUUID();
+      const r = await window.aegis.approveFilePlan({ taskId: id, planId: id });
+      return r.ok ? { ok: true } : { ok: false, code: r.error.code };
+    })()`);
+    record(
+      'approval of a plan main never showed is refused',
+      !unknownPlan.ok && unknownPlan.code === 'unknown_plan',
+      JSON.stringify(unknownPlan),
+    );
+    const unknownTask = await evaluate<{ ok: boolean; code?: string }>(`(async () => {
+      const r = await window.aegis.chooseFolderForTask(crypto.randomUUID());
+      return r.ok ? { ok: true } : { ok: false, code: r.error.code };
+    })()`);
+    record(
+      'folder picker is not opened for a task the core does not know',
+      !unknownTask.ok && unknownTask.code === 'task_not_found',
+      JSON.stringify(unknownTask),
+    );
 
     const port = backend.port;
     if (port !== null) {
