@@ -1,0 +1,20 @@
+# Dependencies and build output
+node_modules/
+apps/desktop/dist/
+apps/desktop/dist-electron/
+services/core/.venv/
+__pycache__/
+.pytest_cache/
+
+# Local data and secrets (never commit)
+*.db
+*.db-wal
+*.db-shm
+.env
+.env.*
+!.env.example
+
+# Tooling
+graphify-out/
+.vscode/
+.idea/

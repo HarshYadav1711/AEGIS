@@ -1,0 +1,9 @@
+[project]
+name = "aegis-core"
+version = "0.1.0"
+description = "AEGIS local core service (FastAPI, loopback only)."
+requires-python = ">=3.12,<3.13"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

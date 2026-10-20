@@ -1,0 +1,4 @@
+# Runtime dependencies (direct, pinned). Full resolved set: requirements.lock.txt
+fastapi==0.156.1
+uvicorn==0.54.0
+pydantic==2.14.1
