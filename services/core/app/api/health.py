@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from app import __version__
 from app.memory import db
+from app.models.base import ProviderHealth
 
 log = logging.getLogger("aegis.health")
 router = APIRouter()
@@ -25,8 +26,18 @@ class DatabaseHealth(BaseModel):
 
 
 class Capabilities(BaseModel):
-    # No model adapter exists in Phase 0. This stays false until a real one is wired.
+    # True only while the provider was reachable at its last probe and has at least one model.
     chat: bool = False
+
+
+class ProviderHealthOut(BaseModel):
+    """Redacted provider view: identity, endpoint and reachability. No credentials exist or are shown."""
+
+    id: str
+    base_url: str
+    reachable: bool
+    detail: str
+    models: list[str]
 
 
 class HealthResponse(BaseModel):
@@ -36,6 +47,7 @@ class HealthResponse(BaseModel):
     uptime_seconds: float
     database: DatabaseHealth
     capabilities: Capabilities
+    provider: ProviderHealthOut | None
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -57,10 +69,25 @@ def health(request: Request) -> HealthResponse:
             log.exception("database probe failed")
             database = DatabaseHealth(ok=False, schema_version=None, journal_mode=None, fts5_available=None)
 
+    probe: ProviderHealth | None = state.provider_health
+    provider = (
+        ProviderHealthOut(
+            id=probe.provider,
+            base_url=getattr(state.adapter, "base_url", ""),
+            reachable=probe.reachable,
+            detail=probe.detail,
+            models=[m.name for m in probe.models],
+        )
+        if probe is not None
+        else None
+    )
+    chat_ready = database.ok and provider is not None and provider.reachable and len(provider.models) > 0
+
     return HealthResponse(
         status="ok" if database.ok else "degraded",
         version=__version__,
         uptime_seconds=round(time.monotonic() - state.started_monotonic, 3),
         database=database,
-        capabilities=Capabilities(),
+        capabilities=Capabilities(chat=chat_ready),
+        provider=provider,
     )

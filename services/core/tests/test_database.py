@@ -48,15 +48,16 @@ def test_newer_schema_than_build_is_refused(tmp_path: Path) -> None:
 
 
 def test_failed_migration_rolls_back(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    broken = db.Migration(version=2, name="broken", statements=("CREATE TABLE t (x)", "NOT VALID SQL"))
+    next_version = db.LATEST_SCHEMA_VERSION + 1
+    broken = db.Migration(version=next_version, name="broken", statements=("CREATE TABLE t (x)", "NOT VALID SQL"))
     monkeypatch.setattr(db, "MIGRATIONS", (*db.MIGRATIONS, broken))
-    monkeypatch.setattr(db, "LATEST_SCHEMA_VERSION", 2)
+    monkeypatch.setattr(db, "LATEST_SCHEMA_VERSION", next_version)
     path = tmp_path / "aegis.db"
     with pytest.raises(sqlite3.OperationalError):
         db.initialize(path)
     conn = sqlite3.connect(path)
     try:
-        assert conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 1
+        assert conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == next_version - 1
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert "t" not in tables
     finally:

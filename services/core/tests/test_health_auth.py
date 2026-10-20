@@ -18,8 +18,11 @@ def test_health_with_valid_token_reports_real_state(client: TestClient, auth: di
     assert body["database"]["schema_version"] == LATEST_SCHEMA_VERSION
     assert body["database"]["journal_mode"] == "wal"
     assert isinstance(body["database"]["fts5_available"], bool)
-    # No model exists in Phase 0; health must not claim chat capability.
-    assert body["capabilities"] == {"chat": False}
+    # The (fixture) provider is reachable and has a model, so chat is advertised with its provenance.
+    assert body["capabilities"] == {"chat": True}
+    assert body["provider"]["id"] == "fixture"
+    assert body["provider"]["reachable"] is True
+    assert body["provider"]["models"] == ["fixture-model:1b"]
     assert response.headers["cache-control"] == "no-store"
 
 
@@ -62,3 +65,15 @@ def test_health_reports_degraded_when_database_is_unavailable(
     body = client.get("/health", headers=auth).json()
     assert body["status"] == "degraded"
     assert body["database"]["ok"] is False
+
+
+def test_health_does_not_claim_chat_when_provider_is_unreachable(settings, auth) -> None:
+    from app.server import create_app
+    from tests.fixture_adapter import FixtureAdapter
+
+    with TestClient(create_app(settings, FixtureAdapter(reachable=False)), base_url="http://127.0.0.1:8765") as c:
+        body = c.get("/health", headers=auth).json()
+    assert body["status"] == "ok"  # the core itself is fine
+    assert body["capabilities"] == {"chat": False}
+    assert body["provider"]["reachable"] is False
+    assert body["provider"]["detail"]

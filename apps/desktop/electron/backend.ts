@@ -194,6 +194,28 @@ export class BackendManager extends EventEmitter<{ status: [BackendStatus] }> {
     }
   }
 
+  /**
+   * Authenticated request to the running core. Main-process only: the token is
+   * added here and never returned. Rejects with CoreUnavailableError when no
+   * core is ready to serve.
+   */
+  async request(pathAndQuery: string, init: { method: 'GET' | 'POST'; body?: unknown; signal?: AbortSignal }): Promise<Response> {
+    const core = this.core;
+    if (!core || core.port === null || this.current.state === 'offline' || this.current.state === 'error') {
+      throw new CoreUnavailableError(this.current.detail);
+    }
+    if (!pathAndQuery.startsWith('/')) throw new Error('core path must be absolute');
+    const headers: Record<string, string> = { Authorization: `Bearer ${core.token}` };
+    if (init.body !== undefined) headers['Content-Type'] = 'application/json';
+    return fetch(`http://127.0.0.1:${core.port}${pathAndQuery}`, {
+      method: init.method,
+      headers,
+      body: init.body === undefined ? undefined : JSON.stringify(init.body),
+      signal: init.signal,
+      redirect: 'error',
+    });
+  }
+
   /** Port of the running core, for main-process-only diagnostics (smoke test). */
   get port(): number | null {
     return this.core?.port ?? null;
@@ -279,6 +301,13 @@ export class BackendManager extends EventEmitter<{ status: [BackendStatus] }> {
     this.clearStartupTimer();
     if (this.pollTimer) clearInterval(this.pollTimer);
     this.pollTimer = null;
+  }
+}
+
+export class CoreUnavailableError extends Error {
+  constructor(detail: string) {
+    super(`Local core is not available: ${detail}`);
+    this.name = 'CoreUnavailableError';
   }
 }
 

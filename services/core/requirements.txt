@@ -2,3 +2,5 @@
 fastapi==0.156.1
 uvicorn==0.54.0
 pydantic==2.14.1
+# Async HTTP client for the local Ollama adapter (already in the Phase 0 lock as a test dependency).
+httpx==0.28.1

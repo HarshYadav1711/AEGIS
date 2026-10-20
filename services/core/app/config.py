@@ -7,12 +7,15 @@ from dataclasses import dataclass
 from pathlib import Path
 
 DATABASE_FILENAME = "aegis.db"
+DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434"
 
 
 @dataclass(frozen=True)
 class Settings:
     data_dir: Path
     session_token: str
+    # Local Ollama-compatible endpoint; validated as loopback-only by the adapter.
+    ollama_base_url: str = DEFAULT_OLLAMA_BASE_URL
 
     @property
     def database_path(self) -> Path:

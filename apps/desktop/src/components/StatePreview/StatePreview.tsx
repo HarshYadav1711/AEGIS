@@ -14,7 +14,7 @@ export function StatePreview({ value, onChange }: StatePreviewProps) {
     <details className="panel panel--dev">
       <summary>Development state preview (simulated)</summary>
       <p className="panel__note">
-        Shows orb styling for states that real events do not produce in Phase 0. While a preview is
+        Shows orb styling for any state, including ones real events do not produce yet. While a preview is
         active the orb is labelled “Preview · simulated” and does not reflect the backend.
       </p>
       <div className="preview-controls">

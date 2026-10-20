@@ -18,9 +18,9 @@ child.stdout.on('data', (chunk) => {
   if (match) verdict = JSON.parse(match[1]);
 });
 const timer = setTimeout(() => {
-  console.error('[smoke] timed out after 120 s');
+  console.error('[smoke] timed out after 900 s');
   child.kill();
-}, 120_000);
+}, 900_000);
 child.on('exit', (code) => {
   clearTimeout(timer);
   if (!verdict) {

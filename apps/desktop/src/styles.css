@@ -39,6 +39,7 @@
   --orb-planning: 200 220 160;
   --orb-executing: 255 170 90;
   --orb-waiting-approval: 250 220 110;
+  --orb-responding: 150 210 245;
   --orb-speaking: 160 230 230;
   --orb-succeeded: 140 220 150;
   --orb-error: 240 110 100;
@@ -84,8 +85,14 @@ body {
 /* Layout */
 .shell {
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   height: 100%;
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: 15rem minmax(0, 1fr);
+  min-height: 0;
 }
 
 .topbar {
@@ -129,10 +136,19 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: var(--space-4);
-  padding: var(--space-6);
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-6);
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
+}
+
+/* With a conversation open the orb shrinks so the transcript gets the room. */
+.stage[data-has-messages] {
+  justify-content: flex-start;
+}
+
+.stage[data-has-messages] .orb {
+  width: min(22vmin, 160px);
 }
 
 .stage > .button {
@@ -173,6 +189,7 @@ body {
 .orb[data-orb-state='planning'] { --orb-tint: var(--orb-planning); }
 .orb[data-orb-state='executing'] { --orb-tint: var(--orb-executing); }
 .orb[data-orb-state='waiting_approval'] { --orb-tint: var(--orb-waiting-approval); }
+.orb[data-orb-state='responding'] { --orb-tint: var(--orb-responding); }
 .orb[data-orb-state='speaking'] { --orb-tint: var(--orb-speaking); }
 .orb[data-orb-state='succeeded'] { --orb-tint: var(--orb-succeeded); }
 .orb[data-orb-state='error'] { --orb-tint: var(--orb-error); }
@@ -198,12 +215,179 @@ body {
   white-space: nowrap;
 }
 
+/* Conversation list */
+.conversations {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-right: 1px solid var(--border-default);
+  min-height: 0;
+  overflow: auto;
+}
+
+.conversations__new {
+  align-self: stretch;
+}
+
+.conversations__empty {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
+
+.conversations__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.conversations__item {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  padding: var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.875rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.conversations__item:hover:not(:disabled) {
+  background: var(--surface-raised);
+}
+
+.conversations__item[aria-current='true'] {
+  border-color: var(--border-default);
+  background: var(--surface-raised);
+}
+
+.conversations__item:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.conversations__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversations__when {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+/* Transcript */
+.transcript {
+  flex: 1 1 auto;
+  width: min(100%, 44rem);
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.transcript--empty {
+  flex: 0 0 auto;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.transcript__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.message {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+
+.message[data-role='user'] {
+  background: var(--surface-sunken);
+}
+
+.message[data-status='failed'] {
+  border-color: var(--state-problem);
+}
+
+.message[data-status='cancelled'] {
+  border-style: dashed;
+}
+
+.message__who {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.message__text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.message__text--placeholder {
+  color: var(--text-secondary);
+}
+
+.message__meta {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.message__error {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--state-problem);
+}
+
 /* Composer */
 .composer {
   display: grid;
   grid-template-columns: 1fr auto;
   gap: var(--space-2) var(--space-3);
-  width: min(100%, 40rem);
+  width: min(100%, 44rem);
+  flex-shrink: 0;
+}
+
+.composer__actions {
+  display: flex;
+  align-items: start;
+}
+
+.composer__footer {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
+
+.composer__count--over {
+  color: var(--state-problem);
+}
+
+.composer__note[data-error='true'] {
+  color: var(--state-problem);
 }
 
 .composer__input {
@@ -321,6 +505,18 @@ select {
 @media (max-width: 720px) {
   .topbar,
   .drawer {
+    padding-inline: var(--space-4);
+  }
+  .workspace {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .conversations {
+    max-height: 9rem;
+    border-right: 0;
+    border-bottom: 1px solid var(--border-default);
+  }
+  .stage {
     padding-inline: var(--space-4);
   }
   .diagnostics__row {

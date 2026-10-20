@@ -32,6 +32,57 @@ MIGRATIONS: tuple[Migration, ...] = (
             "INSERT INTO app_meta (key, value) VALUES ('created_at', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
         ),
     ),
+    Migration(
+        version=2,
+        name="conversations",
+        statements=(
+            """
+            CREATE TABLE conversations (
+                id         TEXT PRIMARY KEY,
+                title      TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """,
+            # One row per user prompt or assistant reply. An assistant row is created
+            # as 'pending' before the provider is called and always ends in exactly one
+            # terminal status; 'complete' is written only after the provider signalled
+            # a normal finish.
+            """
+            CREATE TABLE messages (
+                id                TEXT PRIMARY KEY,
+                conversation_id   TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+                seq               INTEGER NOT NULL,
+                role              TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+                content           TEXT NOT NULL,
+                status            TEXT NOT NULL
+                                  CHECK (status IN ('pending', 'streaming', 'complete', 'failed', 'cancelled')),
+                reply_to          TEXT REFERENCES messages(id),
+                client_request_id TEXT,
+                provider          TEXT,
+                model             TEXT,
+                error_code        TEXT,
+                error_detail      TEXT,
+                finish_reason     TEXT,
+                prompt_tokens     INTEGER,
+                completion_tokens INTEGER,
+                duration_ms       INTEGER,
+                created_at        TEXT NOT NULL,
+                completed_at      TEXT,
+                UNIQUE (conversation_id, seq),
+                CHECK ((role = 'user') = (client_request_id IS NOT NULL))
+            )
+            """,
+            # Idempotency: a retried send with the same request id never creates a second turn.
+            "CREATE UNIQUE INDEX messages_client_request ON messages(client_request_id)",
+            # At most one generation in flight per conversation, enforced by the database.
+            """
+            CREATE UNIQUE INDEX messages_one_active_generation ON messages(conversation_id)
+            WHERE status IN ('pending', 'streaming')
+            """,
+            "CREATE INDEX conversations_updated ON conversations(updated_at DESC)",
+        ),
+    ),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

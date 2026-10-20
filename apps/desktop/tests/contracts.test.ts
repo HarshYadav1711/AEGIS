@@ -19,6 +19,7 @@ test('parses a contract-conforming health response', () => {
     uptimeSeconds: 3.2,
     database: { ok: true, schemaVersion: 1, journalMode: 'wal', fts5Available: true },
     capabilities: { chat: false },
+    provider: null,
   });
 });
 

@@ -8,6 +8,7 @@ import {
   ORB_LABELS,
   ORB_MOTION,
   ORB_STATES,
+  orbStateFor,
   orbStateFromBackend,
 } from '../src/orb/orbModel.ts';
 
@@ -45,4 +46,35 @@ test('approach eases toward the target without overshoot', () => {
   const step = approach(0, 1, 0.1);
   assert.ok(step > 0 && step < 1);
   assert.ok(Math.abs(approach(0, 1, 10) - 1) < 1e-6);
+});
+
+const online = status('online');
+
+test('conversation activity drives the orb only while the core is online', () => {
+  assert.equal(orbStateFor(online, 'none', true), 'idle');
+  assert.equal(orbStateFor(online, 'thinking', true), 'thinking');
+  assert.equal(orbStateFor(online, 'responding', true), 'responding');
+  assert.equal(orbStateFor(online, 'succeeded', true), 'succeeded');
+  assert.equal(orbStateFor(online, 'failed', true), 'error');
+  assert.equal(orbStateFor(online, 'cancelled', true), 'cancelled');
+  // A dead core is never shown as busy, whatever the last request was doing.
+  assert.equal(orbStateFor(status('offline'), 'responding', true), 'offline');
+  assert.equal(orbStateFor(status('starting'), 'thinking', true), 'connecting');
+  assert.equal(orbStateFor(status('degraded'), 'thinking', true), 'error');
+});
+
+test('idle means a model is ready; otherwise the orb reports a problem', () => {
+  assert.equal(orbStateFor(online, 'none', false), 'error');
+});
+
+test('text output is distinct from audio and audio stays unreachable', () => {
+  assert.notEqual(ORB_LABELS.responding, ORB_LABELS.speaking);
+  assert.notDeepEqual(ORB_MOTION.responding, ORB_MOTION.speaking);
+  const activities = ['none', 'thinking', 'responding', 'succeeded', 'failed', 'cancelled'] as const;
+  const reachable = new Set(activities.flatMap((a) => [orbStateFor(online, a, true), orbStateFor(online, a, false)]));
+  for (const state of reachable) assert.ok(LIVE_ORB_STATES.includes(state), state);
+  for (const notYet of ['speaking', 'listening', 'executing', 'planning', 'waiting_approval'] as const) {
+    assert.ok(!reachable.has(notYet), notYet);
+    assert.ok(!LIVE_ORB_STATES.includes(notYet), notYet);
+  }
 });

@@ -20,6 +20,7 @@ import threading
 from typing import TextIO
 
 import uvicorn
+from starlette.types import ASGIApp
 
 from app.config import Settings, data_dir_from_env
 from app.server import create_app
@@ -27,6 +28,7 @@ from app.server import create_app
 READY_PREFIX = "AEGIS_READY "
 TOKEN_LENGTH = 64
 LOOPBACK = "127.0.0.1"
+GRACEFUL_SHUTDOWN_S = 2
 
 log = logging.getLogger("aegis.main")
 
@@ -51,6 +53,23 @@ def bind_loopback_socket() -> socket.socket:
     sock.bind((LOOPBACK, 0))
     sock.set_inheritable(False)
     return sock
+
+
+def server_config(app: ASGIApp) -> uvicorn.Config:
+    return uvicorn.Config(
+        app,
+        log_level="warning",
+        access_log=False,
+        server_header=False,
+        date_header=False,
+        lifespan="on",
+        http="h11",
+        ws="none",
+        loop="asyncio",
+        # Without a bound, uvicorn waits for open reply streams to finish before shutting down.
+        # After this, open requests are cancelled and their replies recorded as interrupted.
+        timeout_graceful_shutdown=GRACEFUL_SHUTDOWN_S,
+    )
 
 
 class CoreServer(uvicorn.Server):
@@ -89,18 +108,7 @@ def main() -> int:
 
     sock = bind_loopback_socket()
     port = sock.getsockname()[1]
-    config = uvicorn.Config(
-        create_app(settings),
-        log_level="warning",
-        access_log=False,
-        server_header=False,
-        date_header=False,
-        lifespan="on",
-        http="h11",
-        ws="none",
-        loop="asyncio",
-    )
-    server = CoreServer(config, port=port, out=sys.stdout)
+    server = CoreServer(server_config(create_app(settings)), port=port, out=sys.stdout)
     threading.Thread(target=watch_parent, args=(sys.stdin, server), daemon=True, name="parent-watch").start()
     log.info("core starting on loopback (pid %s)", os.getpid())
     server.run(sockets=[sock])

@@ -60,7 +60,12 @@ def test_handshake_health_auth_and_graceful_shutdown(tmp_path: Path) -> None:
 
         # Closing stdin is the parent's shutdown request.
         proc.stdin.close()
-        assert proc.wait(timeout=10) == 0
+        try:
+            returncode = proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            pytest.fail(f"core did not exit after stdin EOF; stderr:\n{proc.stderr.read()}")
+        assert returncode == 0
         stderr = proc.stderr.read()
         assert token not in stderr, "session token must never be logged"
         assert (tmp_path / "data" / "aegis.db").exists()

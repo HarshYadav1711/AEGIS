@@ -1,8 +1,11 @@
 import { app, BrowserWindow, Menu, type WebContents } from 'electron';
+import { mkdtempSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { BackendManager, resolveBackendPaths } from './backend';
+import { ChatService } from './chat';
 import { registerIpc } from './ipc';
 import { createRendererLocation, installAppHardening } from './security';
 import { runSmokeTest } from './smoke';
@@ -24,6 +27,11 @@ const desktopRoot = app.getAppPath();
 const repoRoot = path.resolve(desktopRoot, '..', '..');
 const indexFileUrl = pathToFileURL(path.join(desktopRoot, 'dist', 'index.html')).toString();
 const location = createRendererLocation(devServerUrl, indexFileUrl);
+
+if (smokeMode) {
+  // Smoke runs create real conversations; keep them out of the user's own profile and database.
+  app.setPath('userData', mkdtempSync(path.join(os.tmpdir(), 'aegis-smoke-')));
+}
 
 app.enableSandbox();
 let mainWindow: BrowserWindow | null = null;
@@ -47,7 +55,8 @@ async function bootstrap(): Promise<void> {
   if (!devServerUrl) Menu.setApplicationMenu(null);
 
   const backend = new BackendManager(resolveBackendPaths(repoRoot, app.getPath('userData')));
-  registerIpc(backend, appWindow, location);
+  const chat = new ChatService(backend);
+  registerIpc(backend, chat, appWindow, location);
 
   let quitting = false;
   app.on('before-quit', (event) => {

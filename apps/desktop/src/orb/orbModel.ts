@@ -4,7 +4,10 @@
 
 import type { BackendState, BackendStatus } from '../shared/contracts';
 
-/** Full visual state vocabulary from Design.md §2. */
+/**
+ * Visual state vocabulary from Design.md §2, plus `responding`: the model is
+ * streaming text. `speaking` stays reserved for real audio (TTS) playback.
+ */
 export type OrbState =
   | 'idle'
   | 'connecting'
@@ -13,6 +16,7 @@ export type OrbState =
   | 'planning'
   | 'executing'
   | 'waiting_approval'
+  | 'responding'
   | 'speaking'
   | 'succeeded'
   | 'error'
@@ -27,6 +31,7 @@ export const ORB_STATES: readonly OrbState[] = [
   'planning',
   'executing',
   'waiting_approval',
+  'responding',
   'speaking',
   'succeeded',
   'error',
@@ -35,10 +40,27 @@ export const ORB_STATES: readonly OrbState[] = [
 ];
 
 /**
- * States that real Phase 0 events can produce. Everything else is reachable
- * only through the labelled development preview.
+ * States that real Phase 1 events can produce (backend lifecycle + conversation
+ * requests). Everything else is reachable only through the labelled preview.
  */
-export const LIVE_ORB_STATES: readonly OrbState[] = ['connecting', 'idle', 'error', 'offline'];
+export const LIVE_ORB_STATES: readonly OrbState[] = [
+  'connecting',
+  'idle',
+  'thinking',
+  'responding',
+  'succeeded',
+  'cancelled',
+  'error',
+  'offline',
+];
+
+/**
+ * What the current conversation request is doing, from real IPC events:
+ * thinking   — request sent, no text yet
+ * responding — text deltas are arriving
+ * succeeded / failed / cancelled — the terminal status the core persisted
+ */
+export type ChatActivity = 'none' | 'thinking' | 'responding' | 'succeeded' | 'failed' | 'cancelled';
 
 const FROM_BACKEND: Record<BackendState, OrbState> = {
   starting: 'connecting',
@@ -52,6 +74,26 @@ export function orbStateFromBackend(status: BackendStatus | null): OrbState {
   return status ? FROM_BACKEND[status.state] : 'connecting';
 }
 
+const FROM_ACTIVITY: Record<Exclude<ChatActivity, 'none'>, OrbState> = {
+  thinking: 'thinking',
+  responding: 'responding',
+  succeeded: 'succeeded',
+  failed: 'error',
+  cancelled: 'cancelled',
+};
+
+/**
+ * Live orb state. Backend problems win (an unreachable core is never shown as
+ * busy); otherwise the request activity; otherwise `idle` only when a model is
+ * actually ready to answer.
+ */
+export function orbStateFor(status: BackendStatus | null, activity: ChatActivity, chatReady: boolean): OrbState {
+  const backend = orbStateFromBackend(status);
+  if (backend !== 'idle') return backend;
+  if (activity !== 'none') return FROM_ACTIVITY[activity];
+  return chatReady ? 'idle' : 'error';
+}
+
 export const ORB_LABELS: Record<OrbState, string> = {
   idle: 'Ready',
   connecting: 'Connecting',
@@ -60,7 +102,8 @@ export const ORB_LABELS: Record<OrbState, string> = {
   planning: 'Planning',
   executing: 'Executing',
   waiting_approval: 'Waiting for approval',
-  speaking: 'Speaking',
+  responding: 'Responding (text)',
+  speaking: 'Speaking (audio)',
   succeeded: 'Done',
   error: 'Error',
   cancelled: 'Cancelled',
@@ -93,6 +136,7 @@ export const ORB_MOTION: Record<OrbState, OrbMotion> = {
   planning:         { spin: 0.45, energy: 0.65, turbulence: 0.12, pulseHz: 0.5,  presence: 1,    sweep: 1, maxFps: 60 },
   executing:        { spin: 0.9,  energy: 0.9,  turbulence: 0.3,  pulseHz: 1.1,  presence: 1,    sweep: 0, maxFps: 60 },
   waiting_approval: { spin: 0.08, energy: 0.55, turbulence: 0.04, pulseHz: 0.4,  presence: 0.95, sweep: 0, maxFps: 30 },
+  responding:       { spin: 0.4,  energy: 0.8,  turbulence: 0.16, pulseHz: 1.0,  presence: 1,    sweep: 1, maxFps: 60 },
   speaking:         { spin: 0.3,  energy: 0.7,  turbulence: 0.25, pulseHz: 1.2,  presence: 1,    sweep: 0, maxFps: 60 },
   succeeded:        { spin: 0.15, energy: 0.6,  turbulence: 0.03, pulseHz: 0.2,  presence: 0.95, sweep: 0, maxFps: 30 },
   error:            { spin: 0.05, energy: 0.5,  turbulence: 0.14, pulseHz: 0.5,  presence: 0.9,  sweep: 0, maxFps: 30 },
