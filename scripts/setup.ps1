@@ -31,6 +31,14 @@ Invoke-Checked 'Install core Python packages' {
   & $venvPython -m pip install --disable-pip-version-check -r (Join-Path $core 'requirements-dev.txt')
 }
 
+# Chromium headless shell for research, stored inside the venv's playwright package (PLAYWRIGHT_BROWSERS_PATH=0),
+# not in the user profile. The core sets the same value before launching it.
+$env:PLAYWRIGHT_BROWSERS_PATH = '0'
+Invoke-Checked 'Install isolated Chromium for research (Playwright)' {
+  & $venvPython -m playwright install --only-shell chromium
+}
+Remove-Item Env:PLAYWRIGHT_BROWSERS_PATH
+
 Push-Location $desktop
 try {
   Invoke-Checked 'Install desktop npm packages (npm ci)' { npm ci }

@@ -1,6 +1,6 @@
 # AEGIS — Project Starter and Claude Build Kit
 
-**Status:** Phase 0 implementation (bootable desktop shell + live backend status orb) awaiting user review. No AI chat yet. Setup and run instructions: [`DEVELOPMENT.md`](DEVELOPMENT.md).  
+**Status:** Phases 0–2 committed (desktop shell, real local-model chat, permissioned file organization). Phase 3 (bounded public-page research with verified Markdown reports) implemented and awaiting user review. Setup and run instructions: [`DEVELOPMENT.md`](DEVELOPMENT.md).  
 **Prepared:** 2026-10-21. **Mode:** feature-first, security alongside, honest evidence.  
 **Name:** AEGIS is a working title. Brand/trademark clearance is not established.
 

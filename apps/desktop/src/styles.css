@@ -716,3 +716,79 @@ select {
     grid-column: auto;
   }
 }
+
+/* Research task (Phase 3): source provenance, verified findings, report */
+.sources,
+.findings,
+.report__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.report__list {
+  padding-left: var(--space-6);
+  list-style: disc;
+  overflow-wrap: anywhere;
+}
+
+.sources__item,
+.finding {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-1) var(--space-2);
+  border-left: 3px solid var(--border-default);
+  overflow-wrap: anywhere;
+}
+
+.sources__status,
+.finding__status {
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.sources__title {
+  color: var(--text-primary);
+}
+
+.sources__status[data-status='extracted'],
+.finding__status[data-status='supported'] { color: var(--state-online); }
+.sources__status[data-status='rejected'],
+.sources__status[data-status='failed'],
+.sources__status[data-status='blocked'],
+.finding__status[data-status='unsupported'],
+.finding__status[data-status='removed'] { color: var(--state-problem); }
+.finding__status[data-status='weak'] { color: var(--state-starting); }
+.finding[data-status='supported'] { border-left-color: var(--state-online); }
+.finding[data-status='weak'] { border-left-color: var(--state-starting); }
+.finding[data-status='unsupported'],
+.finding[data-status='removed'] { border-left-color: var(--state-problem); }
+
+.report {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.report__heading {
+  margin: var(--space-2) 0 0;
+  font-size: 0.9375rem;
+}
+
+.report__markdown {
+  max-height: 24rem;
+  overflow: auto;
+  padding: var(--space-2);
+  background: var(--surface-sunken);
+  border-radius: var(--radius);
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+}
+
+.task[data-status='awaiting_save'] { border-color: var(--state-starting); }
+.task__status[data-status='awaiting_save'] { color: var(--state-starting); }

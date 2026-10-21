@@ -12,7 +12,7 @@
 | R007 | Persisted chat history | P0 | 1 | Pactrieve | Restart retains messages, no secrets logged |
 | R008 | Tool proposal and permission gate | P0 | 2 | TaskWitness/Pyrock | Rejected actions produce no mutation |
 | R009 | Scoped file organization | P0 | 2 | Buildonaut features | Real file moves, preview, manifest and final verification |
-| R010 | Approved browser research | P0 | 3 | Buildonaut/Cole Medin | Real fetched source URLs and saved report |
+| R010 | Approved browser research | P0 | 3 | Buildonaut/Cole Medin | Real fetched source URLs and saved report — **IMPLEMENTED, TESTED, VERIFIED (2026-10-22, uncommitted)**: deterministic fixture suite + live docs.python.org fetch + real `qwen3:4b` report saved and hash-checked in the Windows app; private/local URLs refused. Limits: direct URLs only (no search), JS-off rendering, lexical citation checks |
 | R011 | Read-only codebase investigation | P0 | 4 | Candor/Codebase Explainer | Source-anchored report, no file changes |
 | R012 | Push-to-talk voice / orb | P1 | 5 | FRIDAY | Real capture/transcript; accessibility and mic status |
 | R013 | Bounded specialist handoff | P1 | 6 | ULTRON/VeyraQ | Actual role transition, no privilege expansion |

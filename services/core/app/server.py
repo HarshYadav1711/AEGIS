@@ -7,18 +7,21 @@ import contextlib
 import logging
 import time
 from collections.abc import AsyncIterator
+from typing import Any
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
 from app.agents.chat import GenerationManager
 from app.agents.file_agent import FileTaskManager, recover_interrupted
-from app.api import chat, file_tasks, health
+from app.agents.research_agent import ResearchManager
+from app.api import chat, file_tasks, health, research_tasks
 from app.api.security import LocalAuthMiddleware
 from app.config import Settings
 from app.memory import conversations, db
 from app.models.base import ModelAdapter, ProviderHealth
 from app.models.ollama import OllamaAdapter
+from app.tasks import research_journal
 
 log = logging.getLogger("aegis.server")
 
@@ -41,7 +44,9 @@ async def _probe_provider(app: FastAPI, adapter: ModelAdapter) -> None:
         app.state.provider_health = ProviderHealth(adapter.provider_id, False, "Provider health probe failed.")
 
 
-def create_app(settings: Settings, adapter: ModelAdapter | None = None) -> FastAPI:
+def create_app(
+    settings: Settings, adapter: ModelAdapter | None = None, fetcher_factory: Any = None
+) -> FastAPI:
     model_adapter: ModelAdapter = adapter or OllamaAdapter(settings.ollama_base_url)
 
     @asynccontextmanager
@@ -61,6 +66,14 @@ def create_app(settings: Settings, adapter: ModelAdapter | None = None) -> FastA
             app.state.file_tasks = FileTaskManager(
                 settings.database_path, model_adapter, protected=(settings.data_dir,)
             )
+            interrupted = research_journal.recover_interrupted(settings.database_path)
+            if interrupted:
+                log.warning("marked %d research task(s) interrupted by a previous shutdown as failed", interrupted)
+            # fetcher_factory is injected only by tests (fixture web); the app always uses the guarded network fetcher.
+            extra = {"fetcher_factory": fetcher_factory} if fetcher_factory else {}
+            app.state.research = ResearchManager(
+                settings.database_path, model_adapter, protected=(settings.data_dir,), **extra
+            )
         except Exception:
             # Keep serving so /health can report the failure instead of the app vanishing.
             log.exception("database initialisation failed")
@@ -73,6 +86,8 @@ def create_app(settings: Settings, adapter: ModelAdapter | None = None) -> FastA
         monitor.cancel()
         if app.state.file_tasks is not None:
             await app.state.file_tasks.shutdown()
+        if app.state.research is not None:
+            await app.state.research.shutdown()
         if app.state.generations is not None:
             await app.state.generations.shutdown()
         # Bounded: a provider call stuck in the OS must not keep the core alive after shutdown.
@@ -94,11 +109,13 @@ def create_app(settings: Settings, adapter: ModelAdapter | None = None) -> FastA
     app.state.database_init = None
     app.state.generations = None
     app.state.file_tasks = None
+    app.state.research = None
     app.state.provider_health = None
     app.state.started_monotonic = time.monotonic()
     app.include_router(health.router)
     app.include_router(chat.router)
     app.include_router(file_tasks.router)
+    app.include_router(research_tasks.router)
     app.add_middleware(LocalAuthMiddleware, token=settings.session_token)
 
     @app.middleware("http")

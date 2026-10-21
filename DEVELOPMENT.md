@@ -19,7 +19,8 @@ powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
 ```
 
 This creates the Python 3.12 virtual environment, installs pinned packages from
-`services\core\requirements-dev.txt`, and runs `npm ci` in `apps\desktop`
+`services\core\requirements-dev.txt`, downloads Playwright's Chromium headless shell into
+that venv (`PLAYWRIGHT_BROWSERS_PATH=0`, nothing goes into your user profile), and runs `npm ci` in `apps\desktop`
 (Electron's install script downloads its runtime binary).
 
 ## Run
@@ -75,7 +76,42 @@ Renderer (React) has no Node, no network (CSP connect-src 'none'), draws the orb
 5. Press Tab: focus moves through orb, message box and panels with a visible focus ring. Activating the orb focuses the message box. **Send** stays disabled because no model exists yet.
 6. Close the window: no `python.exe … app.main` process should remain.
 
+## Research (Phase 3)
+
+Type a message that contains public `https://` URLs, for example
+`Research how asyncio tasks are cancelled https://docs.python.org/3/library/asyncio-task.html`.
+A message starting with "research" but without a usable URL is answered with an explanation;
+any other message stays an ordinary chat turn.
+
+- **Sources:** only the URLs in your message (max 5). There is **no web search**. http://, IP
+  addresses, non-443 ports, `localhost`/`.local`/`.internal` names, embedded credentials and
+  names that resolve to private, loopback, link-local or reserved addresses are refused before
+  anything is fetched, and again at every redirect and at connect time.
+- **Plan → approve:** the plan (question, key terms, exact source list, refusals) is shown first;
+  nothing is fetched until you approve it.
+- **Reading:** robots.txt is honoured; each page (≤ 2 MB, ≤ 40,000 characters of text) is fetched by
+  the core and rendered in a fresh headless Chromium context with JavaScript off and every
+  sub-request blocked. Pages that need JavaScript, PDFs and sites that refuse automated clients
+  (for example Wikipedia, which answers HTTP 403 to clients without contact details in the
+  User-Agent) are reported as failed/blocked.
+- **Report:** one model call writes findings that must cite passage ids and quote them; code checks
+  every citation, quote, key word and number and labels each finding supported / weak / unsupported /
+  removed. The Markdown is rendered by code (links are only fetched URLs).
+- **Save:** *Save report…* opens a folder picker; the core writes a new
+  `aegis-research-<time>-<id>.md` (never overwriting) and re-reads it to verify the hash.
+  *Open report* opens that file with your default Markdown app.
+
+Live checks (skipped unless enabled; a skip is not a pass):
+
+```powershell
+$env:AEGIS_LIVE_WEB = '1'; $env:AEGIS_LIVE_MODEL = 'qwen3:4b'
+services\core\.venv\Scripts\python -m pytest services\core	ests	est_research_live.py -s
+```
+
 ## Troubleshooting
+
+- **"The isolated browser could not start"** on a research task: run `scripts\setup.ps1` again
+  (it installs the Chromium headless shell into the venv).
 
 - **"Python environment not found"** in the status: run `scripts\setup.ps1`.
 - **Port 5173 in use** (dev mode only): close the other Vite instance; the dev server will not pick another port.

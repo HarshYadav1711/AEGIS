@@ -3,6 +3,7 @@ import { app, BrowserWindow, ipcMain, type IpcMainInvokeEvent, type WebContents 
 import {
   isUuid,
   parseInterpretArgs,
+  parseInterpretResearchArgs,
   parsePlanDecisionArgs,
   parseSendMessageArgs,
   type AppInfo,
@@ -12,6 +13,7 @@ import {
 import type { BackendManager } from './backend';
 import type { ChatService } from './chat';
 import type { FileTaskService } from './files';
+import type { ResearchService } from './research';
 import { assertTrustedSender, type RendererLocation } from './security';
 
 const STATUS_CHANGED: IpcChannel = 'aegis:backend:status-changed';
@@ -27,6 +29,7 @@ export function registerIpc(
   backend: BackendManager,
   chat: ChatService,
   files: FileTaskService,
+  research: ResearchService,
   appWindow: () => WebContents | null,
   location: RendererLocation,
 ): void {
@@ -86,6 +89,20 @@ export function registerIpc(
   handleOne('aegis:files:reject', parsePlanDecisionArgs, (args) => files.reject(args));
   handleOne('aegis:files:cancel', uuidArg, (taskId) => files.cancel(taskId));
   handleOne('aegis:files:replan', uuidArg, (taskId) => files.replan(taskId));
+
+  // Research. No channel accepts a URL list, a digest or a filesystem path: sources are parsed by the core
+  // from the request text, the save folder comes from the native picker, the opened path from the journal.
+  handleOne('aegis:research:interpret', parseInterpretResearchArgs, (args) => research.interpret(args));
+  handleOne('aegis:research:get-task', uuidArg, (taskId) => research.getTask(taskId));
+  handle('aegis:research:list-tasks', () => research.listTasks());
+  handleOne('aegis:research:approve', uuidArg, (taskId) => research.approve(taskId));
+  handleOne('aegis:research:reject', uuidArg, (taskId) => research.reject(taskId));
+  handleOne('aegis:research:cancel', uuidArg, (taskId) => research.cancel(taskId));
+  handleOne('aegis:research:save', uuidArg, (taskId) => {
+    const contents = appWindow();
+    return research.save(taskId, contents ? BrowserWindow.fromWebContents(contents) : null);
+  });
+  handleOne('aegis:research:open-report', uuidArg, (taskId) => research.openReport(taskId));
 
   backend.on('status', (status) => {
     const contents = appWindow();

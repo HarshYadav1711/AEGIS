@@ -6,3 +6,5 @@ pydantic==2.14.1
 httpx==0.28.1
 # Bounded agent graphs for the Phase 2 file workflow (D04 / ADR-003). MIT; pulls langchain-core.
 langgraph==1.2.16
+# Isolated headless browser for Phase 3 public-page reading (D06 / ADR-008). Apache-2.0; pulls greenlet, pyee.
+playwright==1.63.0

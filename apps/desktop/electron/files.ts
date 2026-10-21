@@ -138,32 +138,44 @@ export class FileTaskService {
     return detail;
   }
 
-  private async call<T>(
+  private call<T>(
     method: 'GET' | 'POST',
     path: string,
     timeoutMs: number,
     body: unknown,
     parse: (value: unknown) => T | null,
   ): Promise<ChatResult<T>> {
-    try {
-      const response = await this.backend.request(path, { method, body, signal: AbortSignal.timeout(timeoutMs) });
-      if (!response.ok) return { ok: false, error: await errorFromResponse(response) };
-      const value = parse(await response.json());
-      if (value === null) {
-        return failure('invalid_core_response', 'The core returned data that does not match the contract.');
-      }
-      return { ok: true, value };
-    } catch (error) {
-      if (error instanceof CoreUnavailableError) return failure('core_unavailable', error.message);
-      if (error instanceof Error && error.name === 'TimeoutError') {
-        return failure('timeout', 'The core did not answer in time. Check the task list for its recorded state.');
-      }
-      return failure('core_unavailable', 'Could not reach the local core.');
-    }
+    return coreCall(this.backend, method, path, timeoutMs, body, parse);
   }
 }
 
-function failure(code: string, detail: string): { ok: false; error: ChatError } {
+/** One authenticated call to the core, with the response validated by `parse`. Never throws. */
+export async function coreCall<T>(
+  backend: BackendManager,
+  method: 'GET' | 'POST',
+  path: string,
+  timeoutMs: number,
+  body: unknown,
+  parse: (value: unknown) => T | null,
+): Promise<ChatResult<T>> {
+  try {
+    const response = await backend.request(path, { method, body, signal: AbortSignal.timeout(timeoutMs) });
+    if (!response.ok) return { ok: false, error: await errorFromResponse(response) };
+    const value = parse(await response.json());
+    if (value === null) {
+      return failure('invalid_core_response', 'The core returned data that does not match the contract.');
+    }
+    return { ok: true, value };
+  } catch (error) {
+    if (error instanceof CoreUnavailableError) return failure('core_unavailable', error.message);
+    if (error instanceof Error && error.name === 'TimeoutError') {
+      return failure('timeout', 'The core did not answer in time. Check the task list for its recorded state.');
+    }
+    return failure('core_unavailable', 'Could not reach the local core.');
+  }
+}
+
+export function failure(code: string, detail: string): { ok: false; error: ChatError } {
   return { ok: false, error: { code, detail } };
 }
 
@@ -177,6 +189,18 @@ const DESCRIPTIONS: Record<string, string> = {
   task_already_finished: 'This task has already finished.',
   task_not_found: 'This task no longer exists.',
   database_unavailable: 'The local database is unavailable (see Diagnostics).',
+  another_task_running: 'Another research task is still running; wait for it or stop it first.',
+  task_not_running: 'This research task is not running.',
+  not_awaiting_save: 'This report is not waiting to be saved (it was already saved or the task ended).',
+  file_exists: 'A report with this name already exists in that folder; AEGIS never overwrites files.',
+  protected_folder: 'That folder is a protected system or app folder; choose another one.',
+  network_path: 'Network folders are not supported; choose a local folder.',
+  link_in_path: 'The folder path contains a link or junction; choose an ordinary folder.',
+  drive_root: 'Choose a folder inside the drive, not the drive itself.',
+  not_found: 'The folder no longer exists.',
+  root_changed: 'The folder changed while saving; nothing was overwritten. Try again.',
+  verify_failed: 'The written file did not match the report; check it before use.',
+  write_failed: 'The report could not be written to that folder.',
 };
 
 async function errorFromResponse(response: Response): Promise<ChatError> {

@@ -17,6 +17,9 @@ import type {
   FileTaskProgressEvent,
   FileTaskRecord,
   IpcChannel,
+  ResearchInterpretation,
+  ResearchTaskDetail,
+  ResearchTaskSummary,
 } from '../src/shared/contracts';
 
 const channels = {
@@ -39,6 +42,14 @@ const channels = {
   filesCancel: 'aegis:files:cancel',
   filesReplan: 'aegis:files:replan',
   filesEvent: 'aegis:files:event',
+  researchInterpret: 'aegis:research:interpret',
+  researchGetTask: 'aegis:research:get-task',
+  researchListTasks: 'aegis:research:list-tasks',
+  researchApprove: 'aegis:research:approve',
+  researchReject: 'aegis:research:reject',
+  researchCancel: 'aegis:research:cancel',
+  researchSave: 'aegis:research:save',
+  researchOpenReport: 'aegis:research:open-report',
 } as const satisfies Record<string, IpcChannel>;
 
 /** Subscribe without ever handing the renderer the IpcRendererEvent (which exposes `sender`). */
@@ -74,6 +85,20 @@ const bridge: AegisBridge = {
   cancelFileTask: (taskId) => ipcRenderer.invoke(channels.filesCancel, taskId) as Promise<ChatResult<FileTaskDetail>>,
   replanFileTask: (taskId) => ipcRenderer.invoke(channels.filesReplan, taskId) as Promise<ChatResult<FileTaskDetail>>,
   onFileTaskEvent: (listener) => subscribe<FileTaskProgressEvent>(channels.filesEvent, listener),
+  interpretResearchRequest: (args) =>
+    ipcRenderer.invoke(channels.researchInterpret, args) as Promise<ChatResult<ResearchInterpretation>>,
+  getResearchTask: (taskId) =>
+    ipcRenderer.invoke(channels.researchGetTask, taskId) as Promise<ChatResult<ResearchTaskDetail>>,
+  listResearchTasks: () => ipcRenderer.invoke(channels.researchListTasks) as Promise<ChatResult<ResearchTaskSummary[]>>,
+  approveResearchPlan: (taskId) =>
+    ipcRenderer.invoke(channels.researchApprove, taskId) as Promise<ChatResult<ResearchTaskDetail>>,
+  rejectResearchPlan: (taskId) =>
+    ipcRenderer.invoke(channels.researchReject, taskId) as Promise<ChatResult<ResearchTaskDetail>>,
+  cancelResearchTask: (taskId) =>
+    ipcRenderer.invoke(channels.researchCancel, taskId) as Promise<ChatResult<ResearchTaskDetail>>,
+  saveResearchReport: (taskId) =>
+    ipcRenderer.invoke(channels.researchSave, taskId) as Promise<ChatResult<ResearchTaskDetail | null>>,
+  openResearchReport: (taskId) => ipcRenderer.invoke(channels.researchOpenReport, taskId) as Promise<ChatResult<true>>,
 };
 
 contextBridge.exposeInMainWorld('aegis', Object.freeze(bridge));

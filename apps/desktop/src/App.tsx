@@ -6,12 +6,14 @@ import { Diagnostics } from './components/Diagnostics/Diagnostics';
 import { FileTaskHistory } from './components/FileTask/FileTaskHistory';
 import { FileTaskPanel } from './components/FileTask/FileTaskPanel';
 import { Orb } from './components/Orb/Orb';
+import { ResearchHistory, ResearchPanel } from './components/Research/ResearchPanel';
 import { StatePreview } from './components/StatePreview/StatePreview';
 import { Transcript } from './components/Transcript/Transcript';
 import { useBackendStatus } from './hooks/useBackendStatus';
 import { useChat } from './hooks/useChat';
 import { useFileTasks } from './hooks/useFileTasks';
 import { useModelSelection } from './hooks/useModelSelection';
+import { useResearchTasks } from './hooks/useResearchTasks';
 import { useMotionPreference, type MotionPreference } from './hooks/useMotionPreference';
 import { ORB_LABELS, orbStateFor, type OrbState } from './orb/orbModel';
 import type { AppInfo, BackendStatus } from './shared/contracts';
@@ -37,6 +39,7 @@ export function App() {
   const coreOnline = status?.state === 'online';
   const chat = useChat(coreOnline);
   const tasks = useFileTasks(coreOnline);
+  const research = useResearchTasks(coreOnline);
   const availableModels = status?.health?.provider?.models ?? [];
   const [model, setModel] = useModelSelection(availableModels);
   const unavailableReason = chatUnavailableReason(status);
@@ -46,12 +49,23 @@ export function App() {
     window.aegis?.getAppInfo().then(setAppInfo, () => setAppInfo(null));
   }, []);
 
-  const liveState = orbStateFor(status, chat.activity, chatReady, tasks.activity);
+  const taskActivity = research.activity !== 'none' ? research.activity : tasks.activity;
+  const liveState = orbStateFor(status, chat.activity, chatReady, taskActivity);
+  const researchStatus = research.detail?.task.status;
   const orbState = preview ?? liveState;
   const canReconnect = status !== null && (status.state === 'offline' || status.state === 'error') && !!window.aegis;
 
   let liveDetail: string;
   if (status?.state !== 'online') liveDetail = status?.detail ?? 'Waiting for the desktop app to report backend status…';
+  else if (research.pending === 'planning') liveDetail = 'Checking the URLs and preparing a research plan.';
+  else if (research.activity === 'waiting_approval' && researchStatus === 'awaiting_approval')
+    liveDetail = 'Research plan ready. No page is read until you approve it.';
+  else if (research.activity === 'waiting_approval') liveDetail = 'Report ready. Choose a folder to save it.';
+  else if (research.activity === 'executing') liveDetail = 'Reading approved public pages in an isolated browser.';
+  else if (research.activity === 'generating') liveDetail = `${research.detail?.task.model ?? 'The model'} is writing findings from the retrieved text.`;
+  else if (research.activity === 'succeeded') liveDetail = 'Research report saved and verified on disk.';
+  else if (research.activity === 'failed') liveDetail = research.detail?.task.errorDetail ?? 'The research task failed.';
+  else if (research.activity === 'cancelled') liveDetail = 'The research task was stopped or rejected.';
   else if (tasks.activity === 'interpreting') liveDetail = `Checking whether this is a file task (${model ?? 'keyword rules'}).`;
   else if (tasks.activity === 'waiting_folder') liveDetail = 'Waiting for you to choose a folder.';
   else if (tasks.activity === 'planning') liveDetail = 'Listing the chosen folder and preparing a plan.';
@@ -93,7 +107,7 @@ export function App() {
           }}
         />
 
-        <main className="stage" data-has-messages={chat.messages.length > 0 || tasks.detail !== null || undefined}>
+        <main className="stage" data-has-messages={chat.messages.length > 0 || tasks.detail !== null || research.detail !== null || research.refusal !== null || undefined}>
           <Orb
             state={orbState}
             reducedMotion={motion.reduced}
@@ -109,20 +123,25 @@ export function App() {
               {restarting ? 'Reconnecting…' : 'Restart core'}
             </button>
           )}
-          {(chat.messages.length > 0 || chat.loadingConversation || !tasks.detail) && (
+          {(chat.messages.length > 0 || chat.loadingConversation || (!tasks.detail && !research.detail && !research.refusal)) && (
             <Transcript messages={chat.messages} loading={chat.loadingConversation} busy={chat.busy} />
           )}
           <FileTaskPanel tasks={tasks} />
+          <ResearchPanel research={research} />
           <Composer
             ref={composerRef}
             unavailableReason={unavailableReason}
             models={availableModels}
             model={model}
             onModelChange={setModel}
-            busy={chat.busy || tasks.busy}
+            busy={chat.busy || tasks.busy || research.busy}
             canCancel={chat.canCancel}
             pausedReason={
-              tasks.pending === 'interpreting'
+              research.pending === 'planning'
+                ? 'Checking the URLs and preparing a research plan…'
+                : research.busy
+                  ? 'Finish, reject or stop the research task above to send another message.'
+                  : tasks.pending === 'interpreting'
                 ? 'Checking whether this is a file task…'
                 : tasks.busy
                   ? 'Finish, reject or cancel the file task above to send another message.'
@@ -130,9 +149,19 @@ export function App() {
             }
             error={chat.error}
             onSend={async (content, selected) => {
-              // A file-organization request becomes a task; anything else is an ordinary chat turn.
+              // A message with URLs (or starting "research") becomes a research task; a file-organization
+              // request becomes a file task; anything else is an ordinary chat turn.
+              const researched = await research.start(content, selected);
+              if (researched === 'task' || researched === 'handled') {
+                tasks.dismiss();
+                return true;
+              }
+              if (researched === 'error') return false;
               const routed = await tasks.start(content, selected);
-              if (routed === 'task') return true;
+              if (routed === 'task') {
+                research.dismiss();
+                return true;
+              }
               if (routed === 'error') return false;
               return chat.send(content, selected);
             }}
@@ -143,7 +172,8 @@ export function App() {
 
       <footer className="drawer">
         <Diagnostics status={status} appInfo={appInfo} />
-        <FileTaskHistory tasks={tasks.history} disabled={tasks.busy} onOpen={tasks.open} />
+        <FileTaskHistory tasks={tasks.history} disabled={tasks.busy || research.busy} onOpen={tasks.open} />
+        <ResearchHistory tasks={research.history} disabled={tasks.busy || research.busy} onOpen={research.open} />
         <details className="panel">
           <summary>Display</summary>
           <div className="preview-controls">

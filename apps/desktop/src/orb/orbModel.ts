@@ -67,12 +67,13 @@ export const LIVE_ORB_STATES: readonly OrbState[] = [
 export type ChatActivity = 'none' | 'thinking' | 'responding' | 'succeeded' | 'failed' | 'cancelled';
 
 /**
- * What the current file task is doing, from real IPC responses and the core's journal:
+ * What the current file or research task is doing, from real IPC responses and the core's journal:
  * interpreting     — the request is being classified (model call in flight)
  * waiting_folder   — waiting for the user to pick a folder in the native picker
- * planning         — the core is listing the folder and building the plan
- * waiting_approval — the plan is shown and waits for Approve / Reject
- * executing        — the core reports the approved plan as executing
+ * planning         — the core is building the plan (file scan, or research question/URL checks)
+ * waiting_approval — the plan (or a finished report awaiting a save folder) waits for the user
+ * executing        — the core reports the approved plan as executing (moving files / reading pages)
+ * generating       — the core reports the research report model call in flight
  * succeeded / failed / cancelled — the terminal status the core recorded
  */
 export type TaskActivity =
@@ -82,6 +83,7 @@ export type TaskActivity =
   | 'planning'
   | 'waiting_approval'
   | 'executing'
+  | 'generating'
   | 'succeeded'
   | 'failed'
   | 'cancelled';
@@ -92,6 +94,7 @@ const FROM_TASK: Record<Exclude<TaskActivity, 'none'>, OrbState> = {
   planning: 'planning',
   waiting_approval: 'waiting_approval',
   executing: 'executing',
+  generating: 'thinking',
   succeeded: 'succeeded',
   failed: 'error',
   cancelled: 'cancelled',

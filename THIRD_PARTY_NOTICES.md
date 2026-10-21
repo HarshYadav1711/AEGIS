@@ -42,3 +42,13 @@ Python virtual environment; review them before any redistribution.
 | langgraph-checkpoint, langgraph-prebuilt, langgraph-sdk | 4.3.0, 1.1.1, 0.4.8 (via langgraph) | MIT | Installed with LangGraph; AEGIS uses no checkpointer, prebuilt agent or remote SDK |
 | langsmith | 0.14.11 (via langchain-core) | MIT | Installed transitively; tracing is off (no LANGSMITH_* variables reach the core, whose environment is allowlisted) |
 | Other transitive packages of langgraph (orjson, ormsgpack, PyYAML, tenacity, requests, urllib3, xxhash, zstandard, httpx2, websockets, ...) | see `requirements.lock.txt` | MIT / BSD / Apache-2.0; orjson MPL-2.0 AND (Apache-2.0 OR MIT) | Not used directly |
+| playwright (Python) | 1.63.0 | Apache-2.0 (NOTICE and ThirdPartyNotices.txt in the installed package) | Phase 3 isolated headless browser for reading approved public pages |
+| greenlet | 3.5.6 (via playwright) | MIT AND PSF-2.0 | Playwright runtime dependency |
+| pyee | 13.0.1 (via playwright) | MIT | Playwright runtime dependency |
+
+### Downloaded at setup (not in the repository)
+
+| Component | Version | License | Use |
+|---|---|---|---|
+| Chromium headless shell (Playwright build r1243) | 153.0.8010.12 | BSD-3-Clause, with Chromium's bundled third-party notices | Rendering fetched pages with JavaScript off; installed by `scripts\setup.ps1` into the venv's `playwright` package (`PLAYWRIGHT_BROWSERS_PATH=0`) |
+| Node.js runtime bundled in the playwright wheel | (as shipped by playwright 1.63.0) | MIT, with its own notices | Playwright driver process |

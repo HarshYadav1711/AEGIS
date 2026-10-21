@@ -24,7 +24,15 @@ export type IpcChannel =
   | 'aegis:files:reject'
   | 'aegis:files:cancel'
   | 'aegis:files:replan'
-  | 'aegis:files:event';
+  | 'aegis:files:event'
+  | 'aegis:research:interpret'
+  | 'aegis:research:get-task'
+  | 'aegis:research:list-tasks'
+  | 'aegis:research:approve'
+  | 'aegis:research:reject'
+  | 'aegis:research:cancel'
+  | 'aegis:research:save'
+  | 'aegis:research:open-report';
 
 /**
  * Lifecycle of the local Python core as observed by Electron main.
@@ -186,6 +194,17 @@ export interface AegisBridge {
   cancelFileTask(taskId: string): Promise<ChatResult<FileTaskDetail>>;
   replanFileTask(taskId: string): Promise<ChatResult<FileTaskDetail>>;
   onFileTaskEvent(listener: (event: FileTaskProgressEvent) => void): () => void;
+  interpretResearchRequest(args: InterpretResearchArgs): Promise<ChatResult<ResearchInterpretation>>;
+  getResearchTask(taskId: string): Promise<ChatResult<ResearchTaskDetail>>;
+  listResearchTasks(): Promise<ChatResult<ResearchTaskSummary[]>>;
+  /** Approves the plan main last showed for this task (main attaches its digest). */
+  approveResearchPlan(taskId: string): Promise<ChatResult<ResearchTaskDetail>>;
+  rejectResearchPlan(taskId: string): Promise<ChatResult<ResearchTaskDetail>>;
+  cancelResearchTask(taskId: string): Promise<ChatResult<ResearchTaskDetail>>;
+  /** Opens the native folder picker in main; resolves with null if the user closes it. */
+  saveResearchReport(taskId: string): Promise<ChatResult<ResearchTaskDetail | null>>;
+  /** Opens the saved report (path known only to main and the core) in the default app. */
+  openResearchReport(taskId: string): Promise<ChatResult<true>>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -696,4 +715,283 @@ export function parsePlanDecisionArgs(value: unknown): FilePlanDecisionArgs | nu
 
 export function isFileTaskProgressEvent(value: unknown): value is FileTaskProgressEvent {
   return isRecord(value) && value.type === 'planning' && isUuid(value.taskId);
+}
+
+// ---------------------------------------------------------------------------
+// Research task contracts (Phase 3)
+// ---------------------------------------------------------------------------
+
+export type ResearchTaskStatus =
+  | 'awaiting_approval'
+  | 'researching'
+  | 'generating'
+  | 'awaiting_save'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'rejected';
+
+export const RESEARCH_TASK_STATUSES: readonly ResearchTaskStatus[] = [
+  'awaiting_approval',
+  'researching',
+  'generating',
+  'awaiting_save',
+  'completed',
+  'failed',
+  'cancelled',
+  'rejected',
+];
+export const TERMINAL_RESEARCH_STATUSES: readonly ResearchTaskStatus[] = ['completed', 'failed', 'cancelled', 'rejected'];
+
+export type ResearchSourceStatus = 'planned' | 'rejected' | 'fetching' | 'extracted' | 'failed' | 'blocked' | 'skipped';
+const RESEARCH_SOURCE_STATUSES: readonly ResearchSourceStatus[] = [
+  'planned',
+  'rejected',
+  'fetching',
+  'extracted',
+  'failed',
+  'blocked',
+  'skipped',
+];
+export type FindingStatus = 'supported' | 'weak' | 'unsupported' | 'removed';
+const FINDING_STATUSES: readonly FindingStatus[] = ['supported', 'weak', 'unsupported', 'removed'];
+
+export interface ResearchTaskRecord {
+  id: string;
+  /** The user's own request text (untrusted; render as plain text). */
+  requestText: string;
+  question: string;
+  keyTerms: string[];
+  planSource: 'model' | 'keyword_fallback';
+  planModel: string | null;
+  planDetail: string;
+  model: string | null;
+  status: ResearchTaskStatus;
+  cancelRequested: boolean;
+  errorCode: string | null;
+  errorDetail: string | null;
+  /** Rendered by the core from verified records; shown as plain text, never as HTML. */
+  reportMarkdown: string | null;
+  reportSha256: string | null;
+  savedPath: string | null;
+  savedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+
+export interface ResearchSourceRecord {
+  id: string;
+  seq: number;
+  requestedUrl: string;
+  finalUrl: string | null;
+  canonicalUrl: string | null;
+  status: ResearchSourceStatus;
+  code: string | null;
+  detail: string | null;
+  httpStatus: number | null;
+  title: string | null;
+  sha256: string | null;
+  textChars: number | null;
+  truncated: boolean;
+  retrievedAt: string | null;
+}
+
+export interface ResearchFinding {
+  id: string;
+  claim: string;
+  citations: string[];
+  invalidCitations: string[];
+  quote: string;
+  status: FindingStatus;
+  reasons: string[];
+}
+
+export interface ResearchReport {
+  question: string;
+  generatedAt: string;
+  findings: ResearchFinding[];
+  uncertainties: string[];
+  limitations: string[];
+  evidenceSufficient: boolean;
+}
+
+export interface ResearchTaskDetail {
+  task: ResearchTaskRecord;
+  sources: ResearchSourceRecord[];
+  report: ResearchReport | null;
+  events: FileTaskEventRecord[];
+}
+
+export interface RefusedSource {
+  url: string;
+  code: string;
+  detail: string;
+}
+
+export interface ResearchInterpretation {
+  intent: 'research' | 'none';
+  detail: string;
+  refused: RefusedSource[];
+  task: ResearchTaskDetail | null;
+}
+
+export interface ResearchTaskSummary {
+  id: string;
+  question: string;
+  status: ResearchTaskStatus;
+  savedPath: string | null;
+  createdAt: string;
+}
+
+export interface InterpretResearchArgs {
+  text: string;
+  model: string;
+}
+
+const isString = (v: unknown): v is string => typeof v === 'string';
+const isStringArray = (v: unknown): v is string[] => Array.isArray(v) && v.every(isString);
+const isResearchStatus = (v: unknown): v is ResearchTaskStatus =>
+  isString(v) && (RESEARCH_TASK_STATUSES as readonly string[]).includes(v);
+
+function parseResearchTask(value: unknown): { task: ResearchTaskRecord; digest: string } | null {
+  if (!isRecord(value)) return null;
+  const v = value;
+  if (!isUuid(v.id) || !isResearchStatus(v.status) || !isStringArray(v.key_terms)) return null;
+  if (!isString(v.request_text) || !isString(v.question) || !isString(v.plan_detail)) return null;
+  if (v.plan_source !== 'model' && v.plan_source !== 'keyword_fallback') return null;
+  if (!isString(v.plan_digest) || !DIGEST_PATTERN.test(v.plan_digest)) return null;
+  const optional = [
+    v.plan_model,
+    v.model,
+    v.error_code,
+    v.error_detail,
+    v.report_markdown,
+    v.report_sha256,
+    v.saved_path,
+    v.saved_at,
+    v.started_at,
+    v.finished_at,
+  ];
+  if (!optional.every(isNullableString) || !isString(v.created_at) || !isString(v.updated_at)) return null;
+  if (v.cancel_requested !== 0 && v.cancel_requested !== 1) return null;
+  return {
+    digest: v.plan_digest,
+    task: {
+      id: v.id,
+      requestText: v.request_text,
+      question: v.question,
+      keyTerms: v.key_terms,
+      planSource: v.plan_source,
+      planModel: v.plan_model as string | null,
+      planDetail: v.plan_detail,
+      model: v.model as string | null,
+      status: v.status,
+      cancelRequested: v.cancel_requested === 1,
+      errorCode: v.error_code as string | null,
+      errorDetail: v.error_detail as string | null,
+      reportMarkdown: v.report_markdown as string | null,
+      reportSha256: v.report_sha256 as string | null,
+      savedPath: v.saved_path as string | null,
+      savedAt: v.saved_at as string | null,
+      createdAt: v.created_at,
+      updatedAt: v.updated_at,
+      startedAt: v.started_at as string | null,
+      finishedAt: v.finished_at as string | null,
+    },
+  };
+}
+
+function parseResearchSource(value: unknown): ResearchSourceRecord | null {
+  if (!isRecord(value)) return null;
+  const v = value;
+  if (!isUuid(v.id) || typeof v.seq !== 'number' || !Number.isInteger(v.seq) || !isString(v.requested_url)) {
+    return null;
+  }
+  if (!isString(v.status) || !(RESEARCH_SOURCE_STATUSES as readonly string[]).includes(v.status)) return null;
+  const strings = [v.final_url, v.canonical_url, v.code, v.detail, v.title, v.sha256, v.retrieved_at];
+  if (!strings.every(isNullableString) || !isNullableInt(v.http_status) || !isNullableInt(v.text_chars)) return null;
+  if (v.truncated !== 0 && v.truncated !== 1) return null;
+  return {
+    id: v.id,
+    seq: v.seq,
+    requestedUrl: v.requested_url,
+    finalUrl: v.final_url as string | null,
+    canonicalUrl: v.canonical_url as string | null,
+    status: v.status as ResearchSourceStatus,
+    code: v.code as string | null,
+    detail: v.detail as string | null,
+    httpStatus: v.http_status as number | null,
+    title: v.title as string | null,
+    sha256: v.sha256 as string | null,
+    textChars: v.text_chars as number | null,
+    truncated: v.truncated === 1,
+    retrievedAt: v.retrieved_at as string | null,
+  };
+}
+
+function parseFinding(value: unknown): ResearchFinding | null {
+  if (!isRecord(value)) return null;
+  const { id, claim, citations, invalid_citations, quote, status, reasons } = value;
+  if (!isString(id) || !isString(claim) || !isString(quote) || !isStringArray(reasons)) return null;
+  if (!isStringArray(citations) || !isStringArray(invalid_citations)) return null;
+  if (!isString(status) || !(FINDING_STATUSES as readonly string[]).includes(status)) return null;
+  return { id, claim, citations, invalidCitations: invalid_citations, quote, status: status as FindingStatus, reasons };
+}
+
+function parseReport(value: unknown): ResearchReport | null {
+  if (!isRecord(value)) return null;
+  const { question, generated_at, uncertainties, limitations, evidence_sufficient } = value;
+  const findings = parseAll(value.findings, parseFinding);
+  if (!findings || !isString(question) || !isString(generated_at) || typeof evidence_sufficient !== 'boolean') {
+    return null;
+  }
+  if (!isStringArray(uncertainties) || !isStringArray(limitations)) return null;
+  return {
+    question,
+    generatedAt: generated_at,
+    findings,
+    uncertainties,
+    limitations,
+    evidenceSufficient: evidence_sufficient,
+  };
+}
+
+/** Main-process parse: the renderer-safe detail plus the plan digest that only main keeps. */
+export function parseResearchDetailWithDigest(value: unknown): { detail: ResearchTaskDetail; digest: string } | null {
+  if (!isRecord(value)) return null;
+  const task = parseResearchTask(value.task);
+  const sources = parseAll(value.sources, parseResearchSource);
+  const events = parseAll(value.events, parseFileEvent);
+  const report = value.report === null ? null : parseReport(value.report);
+  if (!task || !sources || !events || (value.report !== null && report === null)) return null;
+  return { detail: { task: task.task, sources, report, events }, digest: task.digest };
+}
+
+export function parseResearchTaskList(value: unknown): ResearchTaskSummary[] | null {
+  if (!isRecord(value)) return null;
+  return parseAll(value.tasks, (t) => {
+    if (!isRecord(t) || !isUuid(t.id) || !isString(t.question) || !isResearchStatus(t.status)) return null;
+    if (!isNullableString(t.saved_path) || !isString(t.created_at)) return null;
+    return { id: t.id, question: t.question, status: t.status, savedPath: t.saved_path, createdAt: t.created_at };
+  });
+}
+
+export function parseRefusedSources(value: unknown): RefusedSource[] | null {
+  return parseAll(value, (r) =>
+    isRecord(r) && isString(r.url) && isString(r.code) && isString(r.detail)
+      ? { url: r.url, code: r.code, detail: r.detail }
+      : null,
+  );
+}
+
+/** Validate renderer-supplied research arguments: the request text and a model name, nothing else. */
+export function parseInterpretResearchArgs(value: unknown): InterpretResearchArgs | null {
+  if (!isRecord(value)) return null;
+  if (Object.keys(value).sort().join(',') !== 'model,text') return null;
+  const { text, model } = value;
+  if (typeof text !== 'string' || text.trim().length === 0 || text.length > MAX_FILE_REQUEST_CHARS) return null;
+  if (typeof model !== 'string' || !MODEL_PATTERN.test(model)) return null;
+  return { text, model };
 }

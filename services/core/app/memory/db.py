@@ -169,6 +169,81 @@ MIGRATIONS: tuple[Migration, ...] = (
             "CREATE INDEX file_task_events_task ON file_task_events(task_id, id)",
         ),
     ),
+    Migration(
+        version=4,
+        name="research_journal",
+        statements=(
+            # One row per research request. The source list is fixed when the plan is made
+            # (only URLs the user typed); approval is bound to plan_digest.
+            """
+            CREATE TABLE research_tasks (
+                id              TEXT PRIMARY KEY,
+                request_text    TEXT NOT NULL,
+                question        TEXT NOT NULL,
+                key_terms       TEXT NOT NULL,
+                plan_source     TEXT NOT NULL CHECK (plan_source IN ('model', 'keyword_fallback')),
+                plan_model      TEXT,
+                plan_detail     TEXT NOT NULL,
+                plan_digest     TEXT NOT NULL,
+                model           TEXT,
+                status          TEXT NOT NULL CHECK (status IN (
+                                    'awaiting_approval', 'researching', 'generating', 'awaiting_save',
+                                    'completed', 'failed', 'cancelled', 'rejected')),
+                approval_at     TEXT,
+                cancel_requested INTEGER NOT NULL DEFAULT 0,
+                error_code      TEXT,
+                error_detail    TEXT,
+                report_json     TEXT,
+                report_markdown TEXT,
+                report_sha256   TEXT,
+                saved_path      TEXT,
+                saved_at        TEXT,
+                created_at      TEXT NOT NULL,
+                updated_at      TEXT NOT NULL,
+                started_at      TEXT,
+                finished_at     TEXT
+            )
+            """,
+            # Provenance of every source considered: what was asked for, what was fetched,
+            # and the bounded extracted text the report was built from.
+            """
+            CREATE TABLE research_sources (
+                id            TEXT PRIMARY KEY,
+                task_id       TEXT NOT NULL REFERENCES research_tasks(id) ON DELETE CASCADE,
+                seq           INTEGER NOT NULL,
+                requested_url TEXT NOT NULL,
+                final_url     TEXT,
+                canonical_url TEXT,
+                status        TEXT NOT NULL CHECK (status IN (
+                                  'planned', 'rejected', 'fetching', 'extracted', 'failed', 'blocked', 'skipped')),
+                code          TEXT,
+                detail        TEXT,
+                http_status   INTEGER,
+                content_type  TEXT,
+                title         TEXT,
+                sha256        TEXT,
+                bytes         INTEGER,
+                text_chars    INTEGER,
+                truncated     INTEGER NOT NULL DEFAULT 0,
+                redirects     TEXT,
+                text          TEXT,
+                retrieved_at  TEXT,
+                UNIQUE (task_id, seq)
+            )
+            """,
+            """
+            CREATE TABLE research_events (
+                id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id  TEXT NOT NULL REFERENCES research_tasks(id) ON DELETE CASCADE,
+                at       TEXT NOT NULL,
+                kind     TEXT NOT NULL,
+                detail   TEXT NOT NULL
+            )
+            """,
+            "CREATE INDEX research_tasks_updated ON research_tasks(updated_at DESC)",
+            "CREATE INDEX research_events_task ON research_events(task_id, id)",
+        ),
+    ),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version
