@@ -44,6 +44,9 @@ class GenerationOptions:
     json_schema: dict[str, Any] | None = None
     # False asks a reasoning model to answer directly (short structured tasks); True keeps its default.
     allow_reasoning: bool = True
+    # Context window to request (prompt + reply tokens); None keeps the provider default, which may
+    # silently drop the start of a long prompt.
+    context_tokens: int | None = None
 
 
 @dataclass(frozen=True)
@@ -84,6 +87,8 @@ StreamItem = TextDelta | GenerationResult
 
 class ModelAdapter(Protocol):
     provider_id: str
+    # True only when inference runs on this machine; private local content (vault notes) needs it.
+    is_local: bool
 
     async def health(self) -> ProviderHealth: ...
 

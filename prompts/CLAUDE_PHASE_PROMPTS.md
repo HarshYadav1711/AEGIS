@@ -145,6 +145,8 @@ PRECONDITION: Phase 3 accepted. GOAL: Select a repository folder, inspect allowe
 3. Save Markdown report in approved output directory; verify saved artifact and ensure repository itself remained unchanged (manifest/hash/dirty worktree check where feasible).
 4. Tests: frozen repo fixture, path exclusions, oversized files, secret redaction, content-based prompt injection, no source writes, invalid model response and unavailable LLM handling.
 
+MEMORY/CONTEXT INTEGRATION (D24, user instruction 2026-10-22): this phase also retrieves current repository-scoped and global memories (never candidate/disputed/superseded/rejected, never as authorization), offers up to 3 relevant vault notes with exact version for explicit per-task consent (local model only, stale versions dropped), applies AHI-style evidence labels (confirmed deterministic check / likely issue / plausible concern / best practice / insufficient evidence, hypotheses with supporting and contradicting evidence and verification steps), records the verified outcome as an experience, and offers code-built memory proposals that are stored only on user action. Report functional and memory/context acceptance separately.
+
 DO NOT: code changes, PRs, auto-commits, arbitrary script execution, dependency install, auto 'fix'.
 
 Proposed commit message (text only, NEVER execute commit):

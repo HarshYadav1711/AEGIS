@@ -45,7 +45,17 @@ export type IpcChannel =
   | 'aegis:vault:remove'
   | 'aegis:vault:search'
   | 'aegis:vault:add-note'
-  | 'aegis:vault:open-note';
+  | 'aegis:vault:open-note'
+  | 'aegis:repo:interpret'
+  | 'aegis:repo:choose-repo'
+  | 'aegis:repo:get-task'
+  | 'aegis:repo:list-tasks'
+  | 'aegis:repo:approve'
+  | 'aegis:repo:reject'
+  | 'aegis:repo:cancel'
+  | 'aegis:repo:save'
+  | 'aegis:repo:open-report'
+  | 'aegis:repo:accept-proposal';
 
 /**
  * Lifecycle of the local Python core as observed by Electron main.
@@ -235,6 +245,20 @@ export interface AegisBridge {
   addVaultNote(args: AddVaultNoteArgs): Promise<ChatResult<VaultNote>>;
   /** Opens the note (path known only to main and the core) in the default Markdown app. */
   openVaultNote(noteId: string): Promise<ChatResult<true>>;
+  interpretRepoRequest(args: InterpretResearchArgs): Promise<ChatResult<RepoInterpretation>>;
+  /** Opens the native folder picker in main for the repository to inspect; null if the user closes it. */
+  chooseRepoForTask(taskId: string): Promise<ChatResult<RepoTaskDetail | null>>;
+  getRepoTask(taskId: string): Promise<ChatResult<RepoTaskDetail>>;
+  listRepoTasks(): Promise<ChatResult<RepoTaskSummary[]>>;
+  /** Approves the plan main last showed (main attaches its digest); vault consent is explicit. */
+  approveRepoPlan(args: RepoApproveArgs): Promise<ChatResult<RepoTaskDetail>>;
+  rejectRepoPlan(taskId: string): Promise<ChatResult<RepoTaskDetail>>;
+  cancelRepoTask(taskId: string): Promise<ChatResult<RepoTaskDetail>>;
+  /** Opens the native folder picker in main (never inside the repository); null if the user closes it. */
+  saveRepoReport(taskId: string): Promise<ChatResult<RepoTaskDetail | null>>;
+  openRepoReport(taskId: string): Promise<ChatResult<true>>;
+  /** Stores one code-built memory proposal from the report as the user's own fact. */
+  acceptRepoProposal(args: RepoProposalArgs): Promise<ChatResult<RepoProposalOutcome>>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1356,4 +1380,435 @@ export function parseAddVaultNoteArgs(value: unknown): AddVaultNoteArgs | null {
 export function parseVaultWriteAreaArgs(value: unknown): VaultWriteAreaArgs | null {
   if (!isRecord(value) || !hasExactKeys(value, 'enabled,vaultId') || !isUuid(value.vaultId)) return null;
   return typeof value.enabled === 'boolean' ? { vaultId: value.vaultId, enabled: value.enabled } : null;
+}
+
+// ---------------------------------------------------------------------------
+// Repository investigation contracts (Phase 4)
+// ---------------------------------------------------------------------------
+
+export type RepoTaskStatus =
+  | 'awaiting_repo'
+  | 'awaiting_approval'
+  | 'inspecting'
+  | 'generating'
+  | 'awaiting_save'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'rejected';
+
+export const REPO_TASK_STATUSES: readonly RepoTaskStatus[] = [
+  'awaiting_repo',
+  'awaiting_approval',
+  'inspecting',
+  'generating',
+  'awaiting_save',
+  'completed',
+  'failed',
+  'cancelled',
+  'rejected',
+];
+export const TERMINAL_REPO_STATUSES: readonly RepoTaskStatus[] = ['completed', 'failed', 'cancelled', 'rejected'];
+
+export type RepoFindingStatus =
+  | 'likely_issue'
+  | 'plausible_concern'
+  | 'best_practice'
+  | 'insufficient_evidence'
+  | 'removed';
+const REPO_FINDING_STATUSES: readonly RepoFindingStatus[] = [
+  'likely_issue',
+  'plausible_concern',
+  'best_practice',
+  'insufficient_evidence',
+  'removed',
+];
+
+export interface RepoTaskRecord {
+  id: string;
+  /** The user's own request text (untrusted; render as plain text). */
+  requestText: string;
+  model: string;
+  status: RepoTaskStatus;
+  repoName: string | null;
+  rootPath: string | null;
+  vaultConsent: boolean;
+  cancelRequested: boolean;
+  errorCode: string | null;
+  errorDetail: string | null;
+  /** Rendered by the core from verified records; shown as plain text, never as HTML. */
+  reportMarkdown: string | null;
+  reportSha256: string | null;
+  savedPath: string | null;
+  createdAt: string;
+  finishedAt: string | null;
+}
+
+/** A deterministic check result (code, not model) with its file/line reference. */
+export interface RepoCheck {
+  id: string;
+  title: string;
+  severity: string;
+  path: string | null;
+  line: number | null;
+}
+
+export interface RepoMemoryRef {
+  id: string;
+  kind: MemoryKind;
+  verification: MemoryVerification;
+  scope: string;
+  content: string;
+  recordedAt: string;
+  version: number;
+}
+
+export interface RepoVaultRef {
+  noteId: string;
+  title: string;
+  relPath: string;
+  author: 'user' | 'aegis_user';
+  version: number;
+  sha256: string;
+}
+
+export interface RepoPlan {
+  repoName: string;
+  rootPath: string;
+  modelIsLocal: boolean;
+  filesSeen: number;
+  filesRead: number;
+  excluded: Record<string, number>;
+  sensitivePaths: string[];
+  languages: { name: string; files: number; lines: number }[];
+  frameworks: { label: string; manifest: string; line: number | null }[];
+  testFiles: number;
+  components: { name: string; files: number; lines: number }[];
+  context: { id: string; path: string; start: number; end: number; reason: string }[];
+  checks: RepoCheck[];
+  suspiciousFiles: string[];
+  memory: RepoMemoryRef[];
+  vaultNotes: RepoVaultRef[];
+}
+
+export interface RepoModelFinding {
+  id: string;
+  status: RepoFindingStatus;
+  title: string;
+  detail: string;
+  path: string | null;
+  startLine: number | null;
+  endLine: number | null;
+  quote: string;
+  recommendation: string;
+  reasons: string[];
+}
+
+export interface RepoHypothesis {
+  problem: string;
+  explanations: { explanation: string; supporting: string; contradicting: string }[];
+  verificationSteps: string[];
+}
+
+export interface RepoReport {
+  summary: string;
+  findings: RepoModelFinding[];
+  hypotheses: RepoHypothesis[];
+  memory: { ref: string; content: string; label: string; scope: string; used: boolean; check: string }[];
+  vault: (RepoVaultRef & { status: string; detail: string | null })[];
+  proposals: { subject: string; content: string }[];
+  limitations: string[];
+  uncertainties: string[];
+  unchanged: boolean;
+  entriesCompared: number;
+  excerptsVerified: number;
+}
+
+export interface RepoTaskDetail {
+  task: RepoTaskRecord;
+  plan: RepoPlan | null;
+  report: RepoReport | null;
+  events: FileTaskEventRecord[];
+}
+
+export interface RepoInterpretation {
+  intent: 'repo' | 'none';
+  detail: string;
+  task: RepoTaskDetail | null;
+}
+
+export interface RepoTaskSummary {
+  id: string;
+  repoName: string | null;
+  status: RepoTaskStatus;
+  savedPath: string | null;
+  createdAt: string;
+}
+
+export interface RepoApproveArgs {
+  taskId: string;
+  /** Explicit consent for the listed vault notes to enter this task's (local) model context. */
+  useVaultNotes: boolean;
+}
+
+export interface RepoProposalArgs {
+  taskId: string;
+  index: number;
+}
+
+export interface RepoProposalOutcome {
+  outcome: MemoryAddOutcome;
+  detail: RepoTaskDetail;
+}
+
+const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v);
+const isNullableIntAny = (v: unknown): v is number | null => v === null || isInt(v);
+
+function parseRepoTask(value: unknown): { task: RepoTaskRecord; digest: string | null } | null {
+  if (!isRecord(value)) return null;
+  const v = value;
+  if (!isUuid(v.id) || !oneOf(REPO_TASK_STATUSES, v.status) || !isString(v.request_text) || !isString(v.model)) {
+    return null;
+  }
+  const optional = [
+    v.repo_name,
+    v.root_path,
+    v.error_code,
+    v.error_detail,
+    v.report_markdown,
+    v.report_sha256,
+    v.saved_path,
+    v.finished_at,
+    v.plan_digest,
+  ];
+  if (!optional.every(isNullableString) || !isString(v.created_at)) return null;
+  if ((v.vault_consent !== 0 && v.vault_consent !== 1) || (v.cancel_requested !== 0 && v.cancel_requested !== 1)) {
+    return null;
+  }
+  if (v.plan_digest !== null && !DIGEST_PATTERN.test(v.plan_digest as string)) return null;
+  return {
+    digest: v.plan_digest as string | null,
+    task: {
+      id: v.id,
+      requestText: v.request_text,
+      model: v.model,
+      status: v.status,
+      repoName: v.repo_name as string | null,
+      rootPath: v.root_path as string | null,
+      vaultConsent: v.vault_consent === 1,
+      cancelRequested: v.cancel_requested === 1,
+      errorCode: v.error_code as string | null,
+      errorDetail: v.error_detail as string | null,
+      reportMarkdown: v.report_markdown as string | null,
+      reportSha256: v.report_sha256 as string | null,
+      savedPath: v.saved_path as string | null,
+      createdAt: v.created_at,
+      finishedAt: v.finished_at as string | null,
+    },
+  };
+}
+
+function parseCounts(value: unknown): Record<string, number> | null {
+  if (!isRecord(value)) return null;
+  const out: Record<string, number> = {};
+  for (const [key, n] of Object.entries(value)) {
+    if (!isInt(n)) return null;
+    out[key] = n;
+  }
+  return out;
+}
+
+function parseVaultRef(v: unknown): RepoVaultRef | null {
+  if (!isRecord(v) || !isUuid(v.note_id) || !isString(v.title) || !isString(v.rel_path) || !isInt(v.version)) {
+    return null;
+  }
+  if ((v.author !== 'user' && v.author !== 'aegis_user') || !isString(v.sha256)) return null;
+  return { noteId: v.note_id, title: v.title, relPath: v.rel_path, author: v.author, version: v.version, sha256: v.sha256 };
+}
+
+function parseRepoPlan(value: unknown): RepoPlan | null {
+  if (!isRecord(value) || !isRecord(value.facts)) return null;
+  const f = value.facts;
+  if (!isString(value.repo_name) || !isString(value.root_path) || typeof value.model_is_local !== 'boolean') return null;
+  if (!isInt(f.files_seen) || !isInt(f.files_read) || !isRecord(f.languages) || !isRecord(f.tests)) return null;
+  const excluded = parseCounts(f.excluded);
+  const excludedPaths = parseAll(f.excluded_paths, (p) =>
+    isRecord(p) && isString(p.path) && isString(p.reason) ? { path: p.path, reason: p.reason } : null,
+  );
+  const languages: RepoPlan['languages'] = [];
+  for (const [name, stats] of Object.entries(f.languages)) {
+    if (!isRecord(stats) || !isInt(stats.files) || !isInt(stats.lines)) return null;
+    languages.push({ name, files: stats.files, lines: stats.lines });
+  }
+  const frameworks = parseAll(f.frameworks, (x) =>
+    isRecord(x) && isString(x.label) && isString(x.manifest) && isNullableIntAny(x.line)
+      ? { label: x.label, manifest: x.manifest, line: x.line }
+      : null,
+  );
+  const components = parseAll(f.components, (x) =>
+    isRecord(x) && isString(x.name) && isInt(x.files) && isInt(x.lines)
+      ? { name: x.name, files: x.files, lines: x.lines }
+      : null,
+  );
+  const context = parseAll(f.context, (x) =>
+    isRecord(x) && isString(x.id) && isString(x.path) && isInt(x.start) && isInt(x.end) && isString(x.reason)
+      ? { id: x.id, path: x.path, start: x.start, end: x.end, reason: x.reason }
+      : null,
+  );
+  const checks = parseAll(f.findings, (x) =>
+    isRecord(x) &&
+    isString(x.id) &&
+    isString(x.title) &&
+    isString(x.severity) &&
+    isNullableString(x.path) &&
+    isNullableIntAny(x.line)
+      ? { id: x.id, title: x.title, severity: x.severity, path: x.path, line: x.line }
+      : null,
+  );
+  const memory = parseAll(value.memory, (m) =>
+    isRecord(m) &&
+    isUuid(m.id) &&
+    oneOf(MEMORY_KINDS, m.kind) &&
+    oneOf(MEMORY_VERIFICATIONS, m.verification) &&
+    isString(m.scope) &&
+    isString(m.content) &&
+    isString(m.recorded_at) &&
+    isInt(m.version)
+      ? {
+          id: m.id,
+          kind: m.kind,
+          verification: m.verification,
+          scope: m.scope,
+          content: m.content,
+          recordedAt: m.recorded_at,
+          version: m.version,
+        }
+      : null,
+  );
+  const vaultNotes = parseAll(value.vault_notes, parseVaultRef);
+  if (!excluded || !excludedPaths || !frameworks || !components || !context || !checks || !memory || !vaultNotes) {
+    return null;
+  }
+  if (!isInt(f.tests.files) || !isStringArray(f.suspicious_files)) return null;
+  return {
+    repoName: value.repo_name,
+    rootPath: value.root_path,
+    modelIsLocal: value.model_is_local,
+    filesSeen: f.files_seen,
+    filesRead: f.files_read,
+    excluded,
+    sensitivePaths: excludedPaths.filter((p) => p.reason.startsWith('sensitive')).map((p) => p.path),
+    languages,
+    frameworks,
+    testFiles: f.tests.files,
+    components,
+    context,
+    checks,
+    suspiciousFiles: f.suspicious_files,
+    memory,
+    vaultNotes,
+  };
+}
+
+function parseRepoFinding(x: unknown): RepoModelFinding | null {
+  if (!isRecord(x) || !isString(x.id) || !oneOf(REPO_FINDING_STATUSES, x.status) || !isString(x.title)) return null;
+  if (!isString(x.detail) || !isNullableString(x.path) || !isNullableIntAny(x.start_line)) return null;
+  if (!isNullableIntAny(x.end_line) || !isString(x.quote) || !isString(x.recommendation)) return null;
+  if (!isStringArray(x.reasons)) return null;
+  return {
+    id: x.id,
+    status: x.status,
+    title: x.title,
+    detail: x.detail,
+    path: x.path,
+    startLine: x.start_line,
+    endLine: x.end_line,
+    quote: x.quote,
+    recommendation: x.recommendation,
+    reasons: x.reasons,
+  };
+}
+
+function parseHypothesis(h: unknown): RepoHypothesis | null {
+  if (!isRecord(h) || !isString(h.problem) || !isStringArray(h.verification_steps)) return null;
+  const explanations = parseAll(h.explanations, (e) =>
+    isRecord(e) && isString(e.explanation) && isString(e.supporting) && isString(e.contradicting)
+      ? { explanation: e.explanation, supporting: e.supporting, contradicting: e.contradicting }
+      : null,
+  );
+  return explanations ? { problem: h.problem, explanations, verificationSteps: h.verification_steps } : null;
+}
+
+function parseRepoReport(value: unknown): RepoReport | null {
+  if (!isRecord(value) || !isString(value.summary) || !isRecord(value.verification)) return null;
+  const findings = parseAll(value.model_findings, parseRepoFinding);
+  const hypotheses = parseAll(value.hypotheses, parseHypothesis);
+  const memory = parseAll(value.memory, (m) =>
+    isRecord(m) &&
+    isString(m.ref) &&
+    isString(m.content) &&
+    isString(m.label) &&
+    isString(m.scope) &&
+    typeof m.used === 'boolean' &&
+    isString(m.check)
+      ? { ref: m.ref, content: m.content, label: m.label, scope: m.scope, used: m.used, check: m.check }
+      : null,
+  );
+  const vault = parseAll(value.vault, (n) => {
+    const ref = parseVaultRef(n);
+    if (!ref || !isRecord(n) || !isString(n.status)) return null;
+    if (!(n.detail === undefined || isNullableString(n.detail))) return null;
+    return { ...ref, status: n.status, detail: (n.detail as string | null | undefined) ?? null };
+  });
+  const proposals = parseAll(value.proposals, (p) =>
+    isRecord(p) && isString(p.subject) && isString(p.content) ? { subject: p.subject, content: p.content } : null,
+  );
+  const v = value.verification;
+  if (!findings || !hypotheses || !memory || !vault || !proposals) return null;
+  if (!isStringArray(value.limitations) || !isStringArray(value.uncertainties)) return null;
+  if (typeof v.unchanged !== 'boolean' || !isInt(v.entries) || !isInt(v.excerpts_verified)) return null;
+  return {
+    summary: value.summary,
+    findings,
+    hypotheses,
+    memory,
+    vault,
+    proposals,
+    limitations: value.limitations,
+    uncertainties: value.uncertainties,
+    unchanged: v.unchanged,
+    entriesCompared: v.entries,
+    excerptsVerified: v.excerpts_verified,
+  };
+}
+
+/** Main-process parse: the renderer-safe detail plus the plan digest that only main keeps. */
+export function parseRepoDetailWithDigest(value: unknown): { detail: RepoTaskDetail; digest: string | null } | null {
+  if (!isRecord(value)) return null;
+  const task = parseRepoTask(value.task);
+  const events = parseAll(value.events, parseFileEvent);
+  const plan = value.plan === null ? null : parseRepoPlan(value.plan);
+  const report = value.report === null ? null : parseRepoReport(value.report);
+  if (!task || !events || (value.plan !== null && !plan) || (value.report !== null && !report)) return null;
+  return { detail: { task: task.task, plan, report, events }, digest: task.digest };
+}
+
+export function parseRepoTaskList(value: unknown): RepoTaskSummary[] | null {
+  if (!isRecord(value)) return null;
+  return parseAll(value.tasks, (t) => {
+    if (!isRecord(t) || !isUuid(t.id) || !oneOf(REPO_TASK_STATUSES, t.status) || !isString(t.created_at)) return null;
+    if (!isNullableString(t.repo_name) || !isNullableString(t.saved_path)) return null;
+    return { id: t.id, repoName: t.repo_name, status: t.status, savedPath: t.saved_path, createdAt: t.created_at };
+  });
+}
+
+/** Renderer arguments carry ids and a consent flag only: never a path, file list, note id or digest. */
+export function parseRepoApproveArgs(value: unknown): RepoApproveArgs | null {
+  if (!isRecord(value) || !hasExactKeys(value, 'taskId,useVaultNotes') || !isUuid(value.taskId)) return null;
+  return typeof value.useVaultNotes === 'boolean' ? { taskId: value.taskId, useVaultNotes: value.useVaultNotes } : null;
+}
+
+export function parseRepoProposalArgs(value: unknown): RepoProposalArgs | null {
+  if (!isRecord(value) || !hasExactKeys(value, 'index,taskId') || !isUuid(value.taskId)) return null;
+  return isInt(value.index) && value.index >= 0 && value.index < 10 ? { taskId: value.taskId, index: value.index } : null;
 }

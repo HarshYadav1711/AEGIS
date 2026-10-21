@@ -20,6 +20,7 @@
 - Browser public navigation is bounded and blocks internal/private/localhost/link-local destinations and unexpected redirects, with protections appropriate to browser request interception. Do not rely only on original URL checks.
 - Untrusted web/document text cannot modify permissions, override the agent prompt hierarchy or instruct executor to bypass checks.
 - Read-only repository walk excludes `.git`, `node_modules`, venv, binary blobs, secret files, oversized files and sensitive patterns. Never call shell for repo inspection.
+- Phase 4 as implemented: repository root and report folder only from native pickers in main (no renderer path); the report folder may not be inside the repository; files opened read-only (`rb`) after a no-follow walk and an identity re-check; secret-pattern lines withheld from excerpts and never stored; repository text, memories and notes are quoted data for one tool-less model call; memory is retrieved only if current, and withheld if changed since the plan or contradicted by the manifests; vault excerpts need explicit per-task consent, a local model and an unchanged content hash, and never become memory or policy; nothing from a report is stored as memory without a user click.
 
 ## Workstream M0 — memory
 - Capture only explicit `Remember …` messages, completed task outcomes and (as review-only candidates) model extraction of standing instructions; no screen, clipboard, keystroke, background-app or filesystem capture. A user toggle disables automatic capture.

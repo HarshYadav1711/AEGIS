@@ -1,5 +1,5 @@
 # PROJECT_CONTEXT.md — Current AEGIS Context Lock
-**Updated:** 2026-10-22 (user-approved roadmap change: integrated memory development, D24). **Status:** Phases 0–3, M0 and M0A committed (HEAD `24fc13a`). Phase 4 not started.
+**Updated:** 2026-10-22 (user-approved roadmap change: integrated memory development, D24). **Status:** Phases 0–3, M0 and M0A committed; roadmap update committed (HEAD `beb4b57`). Phase 4 implemented and verified, NOT committed (awaiting user review).
 
 ## Goal
 Build AEGIS, a genuine Windows-first assistant with original reactive orb, actual model calls, safe file/browser/repo automation, clear approvals, durable state, evidence and measurable evaluation. Reference aesthetic: JARVIS holography + ULTRON energy reactivity + FRIDAY voice minimalism. No copying assets/code. Financial goal: $0 mandatory spend.
@@ -22,6 +22,7 @@ Observed on the user's Windows 11 machine (Node 24.19.0, Python 3.12.0, Ollama 0
 | 3 — Browser research | Committed `2440179` | See below |
 | M0 — Adaptive memory | Committed `e71de65` | See below |
 | M0A — Vault indexing | Committed `24fc13a` | See below |
+| 4 — Repository intelligence (+ integrated memory, D24) | Implemented, uncommitted | See below |
 
 Phase 3 verification (2026-10-22):
 - Baseline before edits: pytest 119 passed / 6 skipped; 22 TS tests; Electron smoke all PASS.
@@ -44,7 +45,15 @@ M0A verification (2026-10-22):
 - Obsidian app and `obsidian` CLI are NOT installed on this machine; compatibility rests on Markdown/frontmatter/wikilink parsing only.
 - Environment note: the existing smoke check "full motion animates the orb" failed intermittently in this session on the committed baseline too (window not painted while covered); not caused by M0A.
 
-Design (fonts, palette, layout) remains open per D09. Phase 4 has not started.
+Phase 4 verification (2026-10-22, schema v7):
+- Baseline before edits: pytest 236 passed / 11 skipped; 33 TS tests; typecheck and lint PASS.
+- After: pytest 255 passed / 12 skipped (new skip: opt-in `test_repo_live.py`); 36 TS tests; typecheck, lint and Electron smoke PASS (30 checks, incl. repo IPC rejection of paths/digests/note ids). One full run hit the known intermittent research sub-request check; it passed alone and on the next full run.
+- Live `qwen3:4b` on a disposable fixture: report in 168 s, 1 model call; SQL f-string and `shell=True` findings verified at the right lines; a mis-cited claim marked insufficient evidence; contradicted Flask memory withheld; repository unchanged.
+- Windows GUI acceptance (real app, real core, `qwen3:4b`, temp profile; only native folder dialogs answered by the harness) on a dedicated sample repo with a fresh vault: 42/42 checks PASS. 395 s end to end (342 s generation, 2475/1324 tokens). Plan shown before any model call; `.env` listed but never opened; injection comment flagged and not obeyed; findings for SQL injection, `shell=True`, bare `except` verified with file:line; 2 mis-cited model claims marked insufficient; outdated project memory ("uses Flask") withheld as contradicted, rejected memory absent, global Ollama lesson used with "applicability not verified"; both consented vault notes (AEGIS-written and user-written) used at their exact SHA-256; report saved outside the repo and hash-checked; SHA-256 of every repo file identical before/after; proposal stored only on click as user statement; verified experience stored with `repo_task` provenance.
+- Model limits observed: missed the `innerHTML` XSS and the LIKE injection in the sample; attached wrong files to one component role; hypothesis reasoning partly weak. ~6 tokens/s generation on this machine.
+- Known gaps: a memory found contradicted stays `active` until the user rejects/corrects it in the Memory panel (no one-click dispute from the report); evidence check confirms quotes exist at cited lines, not that they prove the claim (unrelated citations are flagged only); entry points are name-based (a FastAPI `api.py` is not detected).
+
+Design (fonts, palette, layout) remains open per D09.
 
 ## Authority precedence
 1. `rules.md` — operational constraints

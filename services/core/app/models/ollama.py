@@ -67,6 +67,7 @@ def _optional_int(value: Any) -> int | None:
 
 class OllamaAdapter:
     provider_id = "ollama"
+    is_local = True  # validate_base_url accepts loopback literals only
 
     def __init__(
         self,
@@ -137,6 +138,8 @@ class OllamaAdapter:
         }
         if options.json_schema is not None:
             body["format"] = options.json_schema
+        if options.context_tokens is not None:
+            body["options"]["num_ctx"] = options.context_tokens
         if model in self._thinking_models and not options.allow_reasoning:
             body["think"] = False
         elif model in self._thinking_models:

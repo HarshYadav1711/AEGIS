@@ -13,6 +13,8 @@ import {
   parseVaultQuery,
   parseVaultWriteAreaArgs,
   parsePlanDecisionArgs,
+  parseRepoApproveArgs,
+  parseRepoProposalArgs,
   parseSendMessageArgs,
   type AppInfo,
   type BackendStatus,
@@ -23,6 +25,7 @@ import type { ChatService } from './chat';
 import type { FileTaskService } from './files';
 import type { MemoryService } from './memory';
 import type { VaultService } from './vault';
+import type { RepoService } from './repo';
 import type { ResearchService } from './research';
 import { assertTrustedSender, type RendererLocation } from './security';
 
@@ -42,6 +45,7 @@ export function registerIpc(
   research: ResearchService,
   memory: MemoryService,
   vault: VaultService,
+  repo: RepoService,
   appWindow: () => WebContents | null,
   location: RendererLocation,
 ): void {
@@ -135,6 +139,23 @@ export function registerIpc(
   handleOne('aegis:vault:search', parseVaultQuery, (query) => vault.search(query));
   handleOne('aegis:vault:add-note', parseAddVaultNoteArgs, (args) => vault.addNote(args));
   handleOne('aegis:vault:open-note', uuidArg, (id) => vault.openNote(id));
+
+  // Repository investigation. No channel accepts a path, a file list, a note id or a digest: the repository and the
+  // save folder come from native pickers in main, the files and notes are fixed by the core's approved plan.
+  const windowOf = () => {
+    const contents = appWindow();
+    return contents ? BrowserWindow.fromWebContents(contents) : null;
+  };
+  handleOne('aegis:repo:interpret', parseInterpretResearchArgs, (args) => repo.interpret(args));
+  handleOne('aegis:repo:choose-repo', uuidArg, (taskId) => repo.chooseRepo(taskId, windowOf()));
+  handleOne('aegis:repo:get-task', uuidArg, (taskId) => repo.getTask(taskId));
+  handle('aegis:repo:list-tasks', () => repo.listTasks());
+  handleOne('aegis:repo:approve', parseRepoApproveArgs, (args) => repo.approve(args));
+  handleOne('aegis:repo:reject', uuidArg, (taskId) => repo.reject(taskId));
+  handleOne('aegis:repo:cancel', uuidArg, (taskId) => repo.cancel(taskId));
+  handleOne('aegis:repo:save', uuidArg, (taskId) => repo.save(taskId, windowOf()));
+  handleOne('aegis:repo:open-report', uuidArg, (taskId) => repo.openReport(taskId));
+  handleOne('aegis:repo:accept-proposal', parseRepoProposalArgs, (args) => repo.acceptProposal(args));
 
   backend.on('status', (status) => {
     const contents = appWindow();

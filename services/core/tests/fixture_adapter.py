@@ -36,6 +36,7 @@ class Script:
 
 class FixtureAdapter:
     provider_id = "fixture"
+    is_local = True
     base_url = "fixture://scripted"
 
     def __init__(self, reachable: bool = True) -> None:

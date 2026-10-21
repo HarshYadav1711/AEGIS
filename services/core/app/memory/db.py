@@ -16,6 +16,9 @@ class Migration:
     version: int
     name: str
     statements: tuple[str, ...]
+    # Table rebuilds (SQLite's documented 12-step ALTER) need foreign keys off outside the transaction;
+    # integrity is re-checked with PRAGMA foreign_key_check before commit.
+    foreign_keys_off: bool = False
 
 
 MIGRATIONS: tuple[Migration, ...] = (
@@ -424,6 +427,81 @@ MIGRATIONS: tuple[Migration, ...] = (
             "CREATE VIRTUAL TABLE vault_fts USING fts5(title, tags, body, tokenize='unicode61 remove_diacritics 2')",
         ),
     ),
+    Migration(
+        version=7,
+        name="repo_intelligence",
+        foreign_keys_off=True,
+        statements=(
+            # memory_events gains the 'repo_task' source type (CHECK constraints need a table rebuild).
+            """
+            CREATE TABLE memory_events_v7 (
+                id              TEXT PRIMARY KEY,
+                kind            TEXT NOT NULL CHECK (kind IN (
+                                    'remember', 'extracted', 'task_outcome', 'added', 'corrected', 'confirmed',
+                                    'rejected', 'deleted', 'refused', 'settings')),
+                source_type     TEXT NOT NULL CHECK (source_type IN (
+                                    'user_message', 'memory_ui', 'file_task', 'research_task', 'repo_task')),
+                source_id       TEXT,
+                conversation_id TEXT,
+                detail          TEXT NOT NULL,
+                at              TEXT NOT NULL
+            )
+            """,
+            "INSERT INTO memory_events_v7 SELECT id, kind, source_type, source_id, conversation_id, detail, at "
+            "FROM memory_events",
+            "DROP TABLE memory_events",
+            "ALTER TABLE memory_events_v7 RENAME TO memory_events",
+            """
+            CREATE UNIQUE INDEX memory_events_capture_once ON memory_events(kind, source_type, source_id)
+            WHERE source_id IS NOT NULL AND kind IN ('remember', 'extracted', 'task_outcome')
+            """,
+            # One row per read-only repository investigation. The repository root comes only from the native
+            # picker; approval is bound to plan_digest, which covers the files to read and the exact memory and
+            # vault-note versions proposed as context. scan_json is internal (snapshot for the unchanged check).
+            """
+            CREATE TABLE repo_tasks (
+                id              TEXT PRIMARY KEY,
+                request_text    TEXT NOT NULL,
+                model           TEXT NOT NULL,
+                status          TEXT NOT NULL CHECK (status IN (
+                                    'awaiting_repo', 'awaiting_approval', 'inspecting', 'generating',
+                                    'awaiting_save', 'completed', 'failed', 'cancelled', 'rejected')),
+                root_path       TEXT,
+                root_identity   TEXT,
+                repo_name       TEXT,
+                plan_json       TEXT,
+                plan_digest     TEXT,
+                scan_json       TEXT,
+                vault_consent   INTEGER NOT NULL DEFAULT 0,
+                approval_at     TEXT,
+                cancel_requested INTEGER NOT NULL DEFAULT 0,
+                error_code      TEXT,
+                error_detail    TEXT,
+                evidence_json   TEXT,
+                report_json     TEXT,
+                report_markdown TEXT,
+                report_sha256   TEXT,
+                saved_path      TEXT,
+                saved_at        TEXT,
+                created_at      TEXT NOT NULL,
+                updated_at      TEXT NOT NULL,
+                started_at      TEXT,
+                finished_at     TEXT
+            )
+            """,
+            """
+            CREATE TABLE repo_events (
+                id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id  TEXT NOT NULL REFERENCES repo_tasks(id) ON DELETE CASCADE,
+                at       TEXT NOT NULL,
+                kind     TEXT NOT NULL,
+                detail   TEXT NOT NULL
+            )
+            """,
+            "CREATE INDEX repo_tasks_created ON repo_tasks(created_at DESC)",
+            "CREATE INDEX repo_events_task ON repo_events(task_id, id)",
+        ),
+    ),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version
@@ -467,10 +545,14 @@ def apply_migrations(conn: sqlite3.Connection) -> int:
     for migration in MIGRATIONS:
         if migration.version <= current:
             continue
+        if migration.foreign_keys_off:
+            conn.execute("PRAGMA foreign_keys = OFF")
         conn.execute("BEGIN IMMEDIATE")
         try:
             for statement in migration.statements:
                 conn.execute(statement)
+            if migration.foreign_keys_off and conn.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                raise RuntimeError(f"Migration {migration.version} would break foreign keys; not applied.")
             conn.execute(
                 "INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)",
                 (migration.version, migration.name, datetime.now(timezone.utc).isoformat()),
@@ -479,6 +561,8 @@ def apply_migrations(conn: sqlite3.Connection) -> int:
         except BaseException:
             conn.execute("ROLLBACK")
             raise
+        finally:
+            conn.execute("PRAGMA foreign_keys = ON")
     return _current_version(conn)
 
 

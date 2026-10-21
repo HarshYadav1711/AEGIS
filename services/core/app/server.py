@@ -14,14 +14,15 @@ from fastapi import FastAPI
 
 from app.agents.chat import GenerationManager
 from app.agents.file_agent import FileTaskManager, recover_interrupted
+from app.agents.repo_agent import RepoManager
 from app.agents.research_agent import ResearchManager
-from app.api import chat, file_tasks, health, memory, research_tasks, vaults
+from app.api import chat, file_tasks, health, memory, repo_tasks, research_tasks, vaults
 from app.api.security import LocalAuthMiddleware
 from app.config import Settings
 from app.memory import conversations, db
 from app.models.base import ModelAdapter, ProviderHealth
 from app.models.ollama import OllamaAdapter
-from app.tasks import research_journal
+from app.tasks import repo_journal, research_journal
 
 log = logging.getLogger("aegis.server")
 
@@ -74,6 +75,10 @@ def create_app(
             app.state.research = ResearchManager(
                 settings.database_path, model_adapter, protected=(settings.data_dir,), **extra
             )
+            stopped = repo_journal.recover_interrupted(settings.database_path)
+            if stopped:
+                log.warning("marked %d repository task(s) interrupted by a previous shutdown as failed", stopped)
+            app.state.repo = RepoManager(settings.database_path, model_adapter, protected=(settings.data_dir,))
         except Exception:
             # Keep serving so /health can report the failure instead of the app vanishing.
             log.exception("database initialisation failed")
@@ -88,6 +93,8 @@ def create_app(
             await app.state.file_tasks.shutdown()
         if app.state.research is not None:
             await app.state.research.shutdown()
+        if app.state.repo is not None:
+            await app.state.repo.shutdown()
         if app.state.generations is not None:
             await app.state.generations.shutdown()
         # Bounded: a provider call stuck in the OS must not keep the core alive after shutdown.
@@ -110,12 +117,14 @@ def create_app(
     app.state.generations = None
     app.state.file_tasks = None
     app.state.research = None
+    app.state.repo = None
     app.state.provider_health = None
     app.state.started_monotonic = time.monotonic()
     app.include_router(health.router)
     app.include_router(chat.router)
     app.include_router(file_tasks.router)
     app.include_router(research_tasks.router)
+    app.include_router(repo_tasks.router)
     app.include_router(memory.router)
     app.include_router(vaults.router)
     app.add_middleware(LocalAuthMiddleware, token=settings.session_token)

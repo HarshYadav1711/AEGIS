@@ -307,7 +307,7 @@ def test_v5_database_upgrades_to_v6(tmp_path: Path) -> None:
         conn.execute("INSERT INTO schema_migrations VALUES (?, ?, 'x')", (migration.version, migration.name))
     conn.execute("INSERT INTO conversations VALUES ('c', 'Old chat', 't', 't')")
     conn.close()
-    assert db.initialize(path).schema_version == db.LATEST_SCHEMA_VERSION == 6
+    assert db.initialize(path).schema_version == db.LATEST_SCHEMA_VERSION == 7
     with sqlite3.connect(path) as check:
         assert check.execute("SELECT title FROM conversations").fetchall() == [("Old chat",)]
         names = {r[0] for r in check.execute("SELECT name FROM sqlite_master")}

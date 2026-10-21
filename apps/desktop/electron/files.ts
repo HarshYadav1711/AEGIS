@@ -222,6 +222,11 @@ const DESCRIPTIONS: Record<string, string> = {
   write_area_invalid: 'The AEGIS folder in this vault is not an ordinary folder; nothing was written.',
   note_not_found: 'This note is not in the index.',
   note_deleted: 'This note was deleted from the vault.',
+  not_a_repository: 'No readable source or text files were found in that folder.',
+  inside_repository: 'The report cannot be saved inside the inspected repository; choose another folder.',
+  vault_requires_local_model: 'Vault notes can only be given to a local model; approve without vault notes.',
+  proposal_not_found: 'That memory proposal does not exist in this report.',
+  no_report: 'This task has no report yet.',
 };
 
 async function errorFromResponse(response: Response): Promise<ChatError> {

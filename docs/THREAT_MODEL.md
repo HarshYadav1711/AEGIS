@@ -1,5 +1,5 @@
 # THREAT_MODEL.md — MVP Trust Boundaries
-**Scope:** phases 0–4; update when new capabilities shipped. Security claims require explicit tests.
+**Scope:** phases 0–4 (Phase 4 rows added 2026-10-22); update when new capabilities shipped. Security claims require explicit tests.
 
 ## Trust actors
 User / Electron renderer (may display untrusted content) / Electron main & narrow preload / loopback Python core (same Windows user) / model provider & model outputs (untrusted) / external sites and documents (untrusted) / tool registry (trusted project code) / selected local workspace / SQLite state.
@@ -23,6 +23,7 @@ The Python core runs with user privileges. App-level tool checks guard the **LLM
 | T11 | Packages→supply chain | Malicious dependency/skills | Maintained stable licensed deps, review before adding | No unauthorized package install |
 | T13 | Memory→model context | Stored or model-proposed text acts as instructions, fake provenance, secret retention | Proposals stay `candidate` until user confirms (DB CHECK); immutable versions; notes JSON-quoted on one line under a data-only header; secret patterns refused; memory not read by file/research policy | `tests/test_memory.py` injection, secret, candidate and scope tests |
 | T14 | Vault→core / model | Path escape via links, overwrite of personal notes, spoofed authorship, injected instructions, secret indexing | Picker-only roots, no-follow walk, scope re-check, create-only `AEGIS/` area, authorship from write records, no vault text to models, secret skip | `tests/test_vaults.py` junction, read-only, spoofing, injection, secret tests |
+| T15 | Repository→core / model (Phase 4) | Repo writes, link escape, secret leakage into context/DB/report, injected instructions in code or notes, stale memory or notes treated as truth, report written into the repo | Picker-only root (scope checks), no-follow walk + identity re-check on open, read-only `rb` opens, no execution; sensitive files listed by path only; secret-pattern lines withheld; code and notes fenced as data with injection flag; one model call, no tools; memories re-checked and contradiction-checked, vault notes only with explicit consent, local model and unchanged hash; save folder outside the repo; stat snapshot re-compared | `tests/test_repo.py` exclusion, junction, read-only digest, injection, secret, consent, stale-note, stale-memory and save tests; Electron smoke repo IPC rejection |
 | T12 | Orb→user interpretation | Fake progress or mic recording | Backend state binding and explicit capture status | Preview labeled; mic indicator honest |
 
 ## Highest severity blockers

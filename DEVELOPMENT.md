@@ -154,12 +154,59 @@ Open **Vaults** in the bottom drawer and choose **Add vault…**. Pick either an
   editor show up; **Re-index now** does it immediately. Each change is kept as a hashed version.
 - **Open** hands the note to your default Markdown app. **Create note** writes a new file in `AEGIS/`
   only and never overwrites; it shows as "added via AEGIS" until edited outside AEGIS.
-- Note text is only searched; it is not sent to the model. **Remove** forgets the index; files stay.
+- Note text is only searched, except when you explicitly allow up to 3 listed notes for one repository
+  investigation (see below). **Remove** forgets the index; files stay.
 
 GUI acceptance run (needs a new or empty folder):
 
 ```powershell
 $env:AEGIS_SMOKE_VAULT_DIR = "$env:TEMP\aegis-vault-check"; npm --prefix apps\desktop run smoke
+```
+
+## Repository investigation (Phase 4)
+
+Ask for it in the composer, e.g. *Analyze this repository, explain its architecture, identify important
+problems, and suggest improvements.* (requests with URLs go to research instead).
+
+- **Choose repository…** opens a folder picker in Electron main; the renderer never sends a path. The
+  core refuses drive roots, network paths, links/junctions in the path and the app's data folder.
+- **Read-only scan** (no model): never runs code, scripts, tests, builds or package managers; opens files
+  only for reading and never through a link. Skips `.git`, dependencies (`node_modules`, virtual
+  environments, `vendor`), build output and caches, hidden entries, lockfiles, binaries, files over
+  256 kB and secret-bearing files (`.env*`, keys, `credentials*`, `*secret*` … listed by path only, never
+  opened). Bounds: 5000 files inventoried, 1500 files / 8 MB read, 12 excerpts / 20 000 characters to the
+  model. It derives languages, manifests and dependencies (with line numbers), frameworks, components,
+  import relationships and deterministic checks (credential patterns, bare `except`, `eval`/`exec`,
+  `shell=True`, TLS verification off, `.env` not ignored, unpinned dependencies, missing tests/README/
+  LICENSE/lockfile) with file:line references.
+- **Plan** shows all of that, the exact excerpts the model will see, the current memories that will be
+  used (repository scope `project:<folder name>` + global) and up to 3 vault notes with author, version and
+  SHA-256. Vault notes go to the model only if you tick the consent box, only with a local model, and only
+  if each file still has the listed hash. Approval is bound to the plan digest.
+- **Run:** excerpts are re-read and hash-checked; memories that changed since the plan, or that are
+  project memories naming a framework the manifests do not declare, are withheld and listed. One model
+  call (context window 12 288 tokens). Code then checks every model finding: the cited excerpt and lines
+  must exist and the quote must occur in the real file → *likely issue / plausible concern / best
+  practice*, otherwise *insufficient evidence* or *removed*. Hypotheses are shown with supporting and
+  contradicting points, labelled unverified. The Markdown is rendered by code.
+- **Save report…** writes a new `aegis-repo-<name>-<time>-<id>.md` to a folder you pick (never inside the
+  repository, never overwriting), verifies its hash and re-checks that the repository is unchanged. The
+  outcome is stored as a verified experience in the repository scope. *Add to memory* stores one of the
+  code-built proposals as your own statement; nothing is stored without that click.
+
+Live check (skipped unless enabled):
+
+```powershell
+$env:AEGIS_LIVE_MODEL = 'qwen3:4b'
+services\core\.venv\Scripts\python -m pytest services\core\tests\test_repo_live.py -s
+```
+
+GUI acceptance run on a sample repository (the harness answers only the native folder dialogs):
+
+```powershell
+$env:AEGIS_SMOKE_REPO_MODEL = 'qwen3:4b'; $env:AEGIS_SMOKE_REPO_DIR = 'D:\samples\aegis-sample-inventory'
+$env:AEGIS_SMOKE_REPO_OUT = 'D:\samples\reports'; $env:AEGIS_SMOKE_REPO_VAULT_DIR = "$env:TEMP\aegis-repo-vault"
+npm --prefix apps\desktop run smoke
 ```
 
 ## Troubleshooting

@@ -27,6 +27,10 @@ import type {
   ResearchInterpretation,
   ResearchTaskDetail,
   ResearchTaskSummary,
+  RepoInterpretation,
+  RepoProposalOutcome,
+  RepoTaskDetail,
+  RepoTaskSummary,
 } from '../src/shared/contracts';
 
 const channels = {
@@ -70,6 +74,16 @@ const channels = {
   vaultSearch: 'aegis:vault:search',
   vaultAddNote: 'aegis:vault:add-note',
   vaultOpenNote: 'aegis:vault:open-note',
+  repoInterpret: 'aegis:repo:interpret',
+  repoChoose: 'aegis:repo:choose-repo',
+  repoGetTask: 'aegis:repo:get-task',
+  repoListTasks: 'aegis:repo:list-tasks',
+  repoApprove: 'aegis:repo:approve',
+  repoReject: 'aegis:repo:reject',
+  repoCancel: 'aegis:repo:cancel',
+  repoSave: 'aegis:repo:save',
+  repoOpenReport: 'aegis:repo:open-report',
+  repoAcceptProposal: 'aegis:repo:accept-proposal',
 } as const satisfies Record<string, IpcChannel>;
 
 /** Subscribe without ever handing the renderer the IpcRendererEvent (which exposes `sender`). */
@@ -136,6 +150,20 @@ const bridge: AegisBridge = {
   searchVaults: (query) => ipcRenderer.invoke(channels.vaultSearch, query) as Promise<ChatResult<VaultSearchResult>>,
   addVaultNote: (args) => ipcRenderer.invoke(channels.vaultAddNote, args) as Promise<ChatResult<VaultNote>>,
   openVaultNote: (id) => ipcRenderer.invoke(channels.vaultOpenNote, id) as Promise<ChatResult<true>>,
+  interpretRepoRequest: (args) =>
+    ipcRenderer.invoke(channels.repoInterpret, args) as Promise<ChatResult<RepoInterpretation>>,
+  chooseRepoForTask: (taskId) =>
+    ipcRenderer.invoke(channels.repoChoose, taskId) as Promise<ChatResult<RepoTaskDetail | null>>,
+  getRepoTask: (taskId) => ipcRenderer.invoke(channels.repoGetTask, taskId) as Promise<ChatResult<RepoTaskDetail>>,
+  listRepoTasks: () => ipcRenderer.invoke(channels.repoListTasks) as Promise<ChatResult<RepoTaskSummary[]>>,
+  approveRepoPlan: (args) => ipcRenderer.invoke(channels.repoApprove, args) as Promise<ChatResult<RepoTaskDetail>>,
+  rejectRepoPlan: (taskId) => ipcRenderer.invoke(channels.repoReject, taskId) as Promise<ChatResult<RepoTaskDetail>>,
+  cancelRepoTask: (taskId) => ipcRenderer.invoke(channels.repoCancel, taskId) as Promise<ChatResult<RepoTaskDetail>>,
+  saveRepoReport: (taskId) =>
+    ipcRenderer.invoke(channels.repoSave, taskId) as Promise<ChatResult<RepoTaskDetail | null>>,
+  openRepoReport: (taskId) => ipcRenderer.invoke(channels.repoOpenReport, taskId) as Promise<ChatResult<true>>,
+  acceptRepoProposal: (args) =>
+    ipcRenderer.invoke(channels.repoAcceptProposal, args) as Promise<ChatResult<RepoProposalOutcome>>,
 };
 
 contextBridge.exposeInMainWorld('aegis', Object.freeze(bridge));

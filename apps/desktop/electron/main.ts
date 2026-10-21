@@ -10,6 +10,7 @@ import { FileTaskService } from './files';
 import { registerIpc } from './ipc';
 import { MemoryService } from './memory';
 import { VaultService } from './vault';
+import { RepoService } from './repo';
 import { ResearchService } from './research';
 import { createRendererLocation, installAppHardening } from './security';
 import { runSmokeTest } from './smoke';
@@ -63,7 +64,18 @@ async function bootstrap(): Promise<void> {
   const chat = new ChatService(backend);
   const files = new FileTaskService(backend);
   const research = new ResearchService(backend);
-  registerIpc(backend, chat, files, research, new MemoryService(backend), new VaultService(backend), appWindow, location);
+  const repo = new RepoService(backend);
+  registerIpc(
+    backend,
+    chat,
+    files,
+    research,
+    new MemoryService(backend),
+    new VaultService(backend),
+    repo,
+    appWindow,
+    location,
+  );
 
   let quitting = false;
   app.on('before-quit', (event) => {

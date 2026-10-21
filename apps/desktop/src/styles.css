@@ -899,3 +899,18 @@ select {
   border-color: var(--state-problem);
   color: var(--state-problem);
 }
+
+/* Repository investigation (Phase 4): existing tokens only; colour follows how much evidence the code checked. */
+.task[data-status='awaiting_repo'] { border-color: var(--state-starting); }
+.task__status[data-status='awaiting_repo'] { color: var(--state-starting); }
+.finding__status[data-status='confirmed'],
+.finding__status[data-status='likely_issue'],
+.finding__status[data-status='plausible_concern'],
+.finding__status[data-status='best_practice'] { color: var(--state-online); }
+.finding__status[data-status='insufficient_evidence'] { color: var(--state-starting); }
+.finding[data-status='confirmed'],
+.finding[data-status='likely_issue'],
+.finding[data-status='plausible_concern'],
+.finding[data-status='best_practice'] { border-left-color: var(--state-online); }
+.finding[data-status='insufficient_evidence'] { border-left-color: var(--state-starting); }
+.consent { display: flex; gap: 0.5rem; align-items: flex-start; }

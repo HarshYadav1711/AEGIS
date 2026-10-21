@@ -29,7 +29,7 @@ from app.memory.db import connect
 Kind = Literal["fact", "preference", "inference", "experience"]
 Status = Literal["candidate", "active", "disputed", "superseded", "rejected"]
 Verification = Literal["user_stated", "user_confirmed", "tool_verified", "model_proposed"]
-SourceType = Literal["user_message", "memory_ui", "file_task", "research_task"]
+SourceType = Literal["user_message", "memory_ui", "file_task", "research_task", "repo_task"]
 
 LIVE: tuple[str, ...] = ("candidate", "active", "disputed")
 MAX_CONTENT = 500
@@ -325,9 +325,9 @@ def _refuse(path: Path, source_type: SourceType, source_id: str | None, conversa
 
 def add_explicit(
     path: Path, *, content: str, kind: Literal["fact", "preference"], subject: str | None, scope: str,
-    expires_at: str | None = None,
+    expires_at: str | None = None, detail: str | None = None,
 ) -> tuple[Fact, str]:
-    """A memory typed into the memory panel by the user."""
+    """A memory typed into the memory panel by the user (or a proposal the user accepted, see `detail`)."""
     try:
         content, subject = _validate(content, subject)
     except MemoryError as error:
@@ -336,7 +336,8 @@ def add_explicit(
         raise
 
     def run(conn: sqlite3.Connection) -> tuple[Fact, str]:
-        event_id = _event(conn, "added", "memory_ui", None, None, f"Added in the memory panel ({kind}, {scope}).")
+        event_id = _event(conn, "added", "memory_ui", None, None,
+                          detail or f"Added in the memory panel ({kind}, {scope}).")
         return _create(conn, event_id=event_id, content=content, kind=kind, subject=subject, scope=scope,
                        verification="user_stated", observed_at=_now(), expires_at=expires_at)
 
@@ -429,7 +430,8 @@ def propose(
 
 
 def record_task_outcome(
-    path: Path, *, source_type: Literal["file_task", "research_task"], task_id: str, content: str, observed_at: str,
+    path: Path, *, source_type: Literal["file_task", "research_task", "repo_task"], task_id: str, content: str,
+    observed_at: str, scope: str | None = None,
 ) -> Fact | None:
     """A verified tool outcome, written by code from the task journal (no model text)."""
     settings = get_settings(path)
@@ -446,7 +448,7 @@ def record_task_outcome(
         except sqlite3.IntegrityError:  # already captured
             return None
         fact, _ = _create(conn, event_id=event_id, content=content, kind="experience", subject=None,
-                          scope=scope_for(settings["project"]), verification="tool_verified",
+                          scope=scope or scope_for(settings["project"]), verification="tool_verified",
                           observed_at=observed_at)
         return fact
 
@@ -543,12 +545,12 @@ def delete(path: Path, fact_id: str) -> int:
 # ------------------------------------------------------------------ reads
 
 
-def _terms(text: str, *, min_len: int, stop: bool) -> list[str]:
+def _terms(text: str, *, min_len: int, stop: bool, cap: int = 16) -> list[str]:
     seen: list[str] = []
     for word in _WORD.findall(text.casefold()):
         if len(word) >= min_len and not (stop and word in _STOPWORDS) and word not in seen:
             seen.append(word)
-    return seen[:16]
+    return seen[:cap]
 
 
 def _fts_query(terms: list[str], *, prefix: bool) -> str:
@@ -611,9 +613,14 @@ def to_json(fact: Fact, event: dict[str, Any] | None, used: int) -> dict[str, An
     return {**asdict(fact), "expired": fact.expired, "current": fact.current, "source": source, "used_count": used}
 
 
-def retrieve(path: Path, text: str, *, limit: int = RETRIEVE_LIMIT) -> list[Fact]:
-    """Current memories for a reply: the user's own standing preferences plus the best lexical matches."""
-    project = get_settings(path)["project"]
+def retrieve(
+    path: Path, text: str, *, limit: int = RETRIEVE_LIMIT, project: str | None = None, max_terms: int = 16,
+) -> list[Fact]:
+    """Current memories for a reply: the user's own standing preferences plus the best lexical matches.
+
+    `project` overrides the memory-panel project (a repository investigation uses the repository's own scope).
+    """
+    project = project or get_settings(path)["project"]
     scopes = ("global", scope_for(project)) if project else ("global", "global")
     now = _now()
     base = "f.status = 'active' AND (f.expires_at IS NULL OR f.expires_at > ?) AND f.scope IN (?, ?)"
@@ -624,7 +631,7 @@ def retrieve(path: Path, text: str, *, limit: int = RETRIEVE_LIMIT) -> list[Fact
             "AND f.verification IN ('user_stated', 'user_confirmed') ORDER BY f.recorded_at DESC LIMIT ?",
             (now, *scopes, ALWAYS_PREFERENCES),
         ).fetchall()
-        terms = _terms(text, min_len=3, stop=True)
+        terms = _terms(text, min_len=3, stop=True, cap=max_terms)
         matches = conn.execute(
             f"""SELECT f.* FROM memory_fts JOIN memory_facts f ON f.rowid = memory_fts.rowid
                 WHERE memory_fts MATCH ? AND {base} ORDER BY bm25(memory_fts) LIMIT ?""",
@@ -636,6 +643,17 @@ def retrieve(path: Path, text: str, *, limit: int = RETRIEVE_LIMIT) -> list[Fact
         if all(f.id != fact.id for f in out):
             out.append(fact)
     return out[: limit + ALWAYS_PREFERENCES]
+
+
+def in_scope(path: Path, scope: str, *, limit: int = 8) -> list[Fact]:
+    """Current memories of one project scope (a repository investigation uses all of its own, by recency)."""
+    with _closing(path) as conn:
+        rows = conn.execute(
+            "SELECT * FROM memory_facts WHERE scope = ? AND status = 'active' AND (expires_at IS NULL OR expires_at > ?) "
+            "AND verification != 'model_proposed' ORDER BY recorded_at DESC LIMIT ?",
+            (scope, _now(), limit),
+        ).fetchall()
+    return [_fact(r) for r in rows]
 
 
 def record_retrievals(path: Path, message_id: str, facts: list[Fact]) -> None:

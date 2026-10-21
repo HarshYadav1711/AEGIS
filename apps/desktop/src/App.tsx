@@ -8,6 +8,7 @@ import { FileTaskPanel } from './components/FileTask/FileTaskPanel';
 import { MemoryPanel } from './components/Memory/MemoryPanel';
 import { VaultPanel } from './components/Vault/VaultPanel';
 import { Orb } from './components/Orb/Orb';
+import { RepoHistory, RepoPanel } from './components/Repo/RepoPanel';
 import { ResearchHistory, ResearchPanel } from './components/Research/ResearchPanel';
 import { StatePreview } from './components/StatePreview/StatePreview';
 import { Transcript } from './components/Transcript/Transcript';
@@ -17,6 +18,7 @@ import { useFileTasks } from './hooks/useFileTasks';
 import { useMemory } from './hooks/useMemory';
 import { useVault } from './hooks/useVault';
 import { useModelSelection } from './hooks/useModelSelection';
+import { useRepoTasks } from './hooks/useRepoTasks';
 import { useResearchTasks } from './hooks/useResearchTasks';
 import { useMotionPreference, type MotionPreference } from './hooks/useMotionPreference';
 import { ORB_LABELS, orbStateFor, type OrbState } from './orb/orbModel';
@@ -44,9 +46,10 @@ export function App() {
   const chat = useChat(coreOnline);
   const tasks = useFileTasks(coreOnline);
   const research = useResearchTasks(coreOnline);
+  const repo = useRepoTasks(coreOnline);
   // Re-read an open memory panel whenever a chat turn or task may have stored something.
   const vault = useVault(coreOnline);
-  const memory = useMemory(coreOnline, chat.messages.length + tasks.history.length + research.history.length + (chat.busy ? 0 : 1));
+  const memory = useMemory(coreOnline, chat.messages.length + tasks.history.length + research.history.length + repo.history.length + (repo.detail?.events.length ?? 0) + (chat.busy ? 0 : 1));
   const availableModels = status?.health?.provider?.models ?? [];
   const [model, setModel] = useModelSelection(availableModels);
   const unavailableReason = chatUnavailableReason(status);
@@ -56,7 +59,9 @@ export function App() {
     window.aegis?.getAppInfo().then(setAppInfo, () => setAppInfo(null));
   }, []);
 
-  const taskActivity = research.activity !== 'none' ? research.activity : tasks.activity;
+  const taskActivity =
+    repo.activity !== 'none' ? repo.activity : research.activity !== 'none' ? research.activity : tasks.activity;
+  const repoStatus = repo.detail?.task.status;
   const liveState = orbStateFor(status, chat.activity, chatReady, taskActivity);
   const researchStatus = research.detail?.task.status;
   const orbState = preview ?? liveState;
@@ -64,6 +69,17 @@ export function App() {
 
   let liveDetail: string;
   if (status?.state !== 'online') liveDetail = status?.detail ?? 'Waiting for the desktop app to report backend status…';
+  else if (repo.activity === 'interpreting') liveDetail = 'Checking whether this is a repository investigation.';
+  else if (repo.activity === 'waiting_folder') liveDetail = 'Waiting for you to choose the repository (read-only).';
+  else if (repo.activity === 'planning') liveDetail = 'Scanning the chosen repository read-only and preparing a plan.';
+  else if (repo.activity === 'waiting_approval' && repoStatus === 'awaiting_approval')
+    liveDetail = 'Investigation plan ready. Nothing goes to the model until you approve it.';
+  else if (repo.activity === 'waiting_approval') liveDetail = 'Repository report ready. Choose a folder to save it.';
+  else if (repo.activity === 'executing') liveDetail = 'Re-checking the planned excerpts, memories and notes.';
+  else if (repo.activity === 'generating') liveDetail = `${repo.detail?.task.model ?? 'The model'} is analysing the repository excerpts.`;
+  else if (repo.activity === 'succeeded') liveDetail = 'Repository report saved and verified; the repository was not modified.';
+  else if (repo.activity === 'failed') liveDetail = repo.detail?.task.errorDetail ?? 'The repository investigation failed.';
+  else if (repo.activity === 'cancelled') liveDetail = 'The repository investigation was stopped or rejected.';
   else if (research.pending === 'planning') liveDetail = 'Checking the URLs and preparing a research plan.';
   else if (research.activity === 'waiting_approval' && researchStatus === 'awaiting_approval')
     liveDetail = 'Research plan ready. No page is read until you approve it.';
@@ -114,7 +130,7 @@ export function App() {
           }}
         />
 
-        <main className="stage" data-has-messages={chat.messages.length > 0 || tasks.detail !== null || research.detail !== null || research.refusal !== null || undefined}>
+        <main className="stage" data-has-messages={chat.messages.length > 0 || tasks.detail !== null || research.detail !== null || research.refusal !== null || repo.detail !== null || undefined}>
           <Orb
             state={orbState}
             reducedMotion={motion.reduced}
@@ -130,21 +146,26 @@ export function App() {
               {restarting ? 'Reconnecting…' : 'Restart core'}
             </button>
           )}
-          {(chat.messages.length > 0 || chat.loadingConversation || (!tasks.detail && !research.detail && !research.refusal)) && (
+          {(chat.messages.length > 0 || chat.loadingConversation || (!tasks.detail && !research.detail && !research.refusal && !repo.detail)) && (
             <Transcript messages={chat.messages} loading={chat.loadingConversation} busy={chat.busy} />
           )}
           <FileTaskPanel tasks={tasks} />
           <ResearchPanel research={research} />
+          <RepoPanel key={repo.detail?.task.id ?? 'none'} repo={repo} />
           <Composer
             ref={composerRef}
             unavailableReason={unavailableReason}
             models={availableModels}
             model={model}
             onModelChange={setModel}
-            busy={chat.busy || tasks.busy || research.busy}
+            busy={chat.busy || tasks.busy || research.busy || repo.busy}
             canCancel={chat.canCancel}
             pausedReason={
-              research.pending === 'planning'
+              repo.pending === 'routing'
+                ? 'Checking whether this is a repository investigation…'
+                : repo.busy
+                  ? 'Finish, reject or cancel the repository investigation above to send another message.'
+                  : research.pending === 'planning'
                 ? 'Checking the URLs and preparing a research plan…'
                 : research.busy
                   ? 'Finish, reject or stop the research task above to send another message.'
@@ -156,17 +177,27 @@ export function App() {
             }
             error={chat.error}
             onSend={async (content, selected) => {
-              // A message with URLs (or starting "research") becomes a research task; a file-organization
-              // request becomes a file task; anything else is an ordinary chat turn.
+              // A request to analyse a repository (no URLs) becomes a read-only repository task; a message with
+              // URLs (or starting "research") becomes a research task; a file-organization request becomes a file
+              // task; anything else is an ordinary chat turn.
+              const inspected = await repo.start(content, selected);
+              if (inspected === 'task') {
+                research.dismiss();
+                tasks.dismiss();
+                return true;
+              }
+              if (inspected === 'error') return false;
               const researched = await research.start(content, selected);
               if (researched === 'task' || researched === 'handled') {
                 tasks.dismiss();
+                repo.dismiss();
                 return true;
               }
               if (researched === 'error') return false;
               const routed = await tasks.start(content, selected);
               if (routed === 'task') {
                 research.dismiss();
+                repo.dismiss();
                 return true;
               }
               if (routed === 'error') return false;
@@ -181,6 +212,7 @@ export function App() {
         <Diagnostics status={status} appInfo={appInfo} />
         <FileTaskHistory tasks={tasks.history} disabled={tasks.busy || research.busy} onOpen={tasks.open} />
         <ResearchHistory tasks={research.history} disabled={tasks.busy || research.busy} onOpen={research.open} />
+        <RepoHistory tasks={repo.history} disabled={tasks.busy || research.busy || repo.busy} onOpen={repo.open} />
         <MemoryPanel state={memory} disabled={!coreOnline} />
         <VaultPanel state={vault} disabled={!coreOnline} />
         <details className="panel">

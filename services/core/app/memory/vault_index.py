@@ -6,8 +6,10 @@ observation history (content hashes per version, valid time = file mtime,
 recorded time = when AEGIS saw it). Removing a vault from AEGIS deletes only
 this index, never a file.
 
-Vault text is untrusted data. Nothing in this module (or its callers) puts
-note content into model context, system instructions or policy in M0A.
+Vault text is untrusted data and never becomes system instructions or policy.
+Since Phase 4 the only path into model context is `read_excerpt`: a bounded
+excerpt of a note the user consented to for one repository task, read only if
+the file still has the exact content hash that was shown at approval.
 """
 
 from __future__ import annotations
@@ -329,6 +331,49 @@ def note_path(path: Path, note_id: str) -> Path:
         return scan.resolve(_scope(vault), note["rel_path"])
     except ScopeError as error:
         raise VaultError(error.code, error.detail) from None
+
+
+def version_id(path: Path, note_id: str, version: int) -> str | None:
+    with _closing(path) as conn:
+        row = conn.execute("SELECT id FROM vault_note_versions WHERE note_id = ? AND version = ?",
+                           (note_id, version)).fetchone()
+    return row["id"] if row else None
+
+
+def read_excerpt(path: Path, note_id: str, expected_sha256: str, terms: list[str], max_chars: int) -> dict[str, Any]:
+    """Bounded excerpt of one note for model context, only if the file is still exactly the planned version.
+
+    Used only after the user consented to these notes for one task (Phase 4). Returns a status instead of
+    raising: 'used', 'stale' (content changed since it was proposed), 'unavailable' or 'withheld_secret'.
+    """
+    try:
+        file_path = note_path(path, note_id)
+        data = file_path.read_bytes()[: scan.MAX_NOTE_BYTES + 1]
+    except (VaultError, OSError) as error:
+        return {"status": "unavailable", "detail": getattr(error, "detail", None) or "The note could not be read."}
+    current = hashlib.sha256(data).hexdigest()
+    if current != expected_sha256:
+        return {"status": "stale", "detail": f"The note changed after it was proposed (planned SHA-256 "
+                                             f"{expected_sha256[:12]}…, now {current[:12]}…); it was not used.",
+                "current_sha256": current}
+    parsed = scan.parse(data, file_path.stem)
+    if parsed.has_secret:
+        return {"status": "withheld_secret", "detail": "The note now matches a secret pattern; it was not used."}
+    paragraphs = [p.strip() for p in parsed.body.split("\n\n") if p.strip()]
+    wanted = {t.casefold() for t in terms}
+    ranked = sorted(range(len(paragraphs)),
+                    key=lambda i: (-sum(w in paragraphs[i].casefold() for w in wanted), i))
+    picked: list[int] = []
+    used = 0
+    for index in ranked:
+        if used + len(paragraphs[index]) > max_chars and picked:
+            continue
+        picked.append(index)
+        used += len(paragraphs[index])
+        if used >= max_chars:
+            break
+    text = "\n\n".join(paragraphs[i] for i in sorted(picked))[:max_chars]
+    return {"status": "used", "text": text, "chars": len(text)}
 
 
 def add_note(path: Path, vault_id: str, title: str, body: str) -> dict[str, Any]:

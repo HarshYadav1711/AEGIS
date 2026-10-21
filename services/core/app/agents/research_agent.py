@@ -195,8 +195,10 @@ async def _model_json(
     schema: dict[str, Any],
     max_tokens: int,
     timeout_s: float,
+    context_tokens: int | None = None,
 ) -> tuple[str, GenerationResult | None]:
-    options = GenerationOptions(max_output_tokens=max_tokens, temperature=0.1, json_schema=schema, allow_reasoning=False)
+    options = GenerationOptions(max_output_tokens=max_tokens, temperature=0.1, json_schema=schema, allow_reasoning=False,
+                                context_tokens=context_tokens)
     parts: list[str] = []
     result: GenerationResult | None = None
     async with asyncio.timeout(timeout_s):
