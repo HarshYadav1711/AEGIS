@@ -17,11 +17,24 @@ READ five root authority docs + decisions/context → inspect Git working tree �
 | **6 — Specialist agents** | Planner/Executor/Reviewer bounded delegation with persisted trace | Real scenario shows handoffs with no authority escalation; verifier not merely second-model approval | `feat: introduce bounded specialist agent coordination` |
 | **7 — Demo/evaluation release** | Reproducible E2E demo, limits, model comparisons, package/readme | Measured results, real hardware smoke, install guide, failed cases; no inflated claims | `test: finalize AEGIS evaluation and MVP release evidence` |
 
+## Integrated memory development (D24, user instruction 2026-10-22)
+From Phase 4 on there are no further standalone memory milestones. Memory/context work ships inside each product phase and only as far as that phase materially needs it. Every phase plan, test set and report covers:
+1. The primary functional deliverable (unchanged exit gate above).
+2. Retrieval of relevant existing memories (and authorized vault notes as evidence).
+3. Capture of meaningful, verified task outcomes.
+4. Provenance and source-version tracking where applicable.
+5. Detection of stale, conflicting or incorrect context.
+6. User-governed memory corrections.
+7. Memory access and privacy boundaries.
+8. Tests proving the feature and its memory integration work together.
+
+Rules: no model-driven reflection after every event; AHI elements (evidence-backed observations, competing hypotheses when uncertainty warrants, explicit falsifiers, temporal validity, negative results/failed approaches, deterministic verification, governed revisions, learning from real outcomes) are added incrementally where a phase needs them, never as a separate platform. Obsidian: existing adapter kept; notes are evidence, not confirmed facts; personal vaults read-only by default; no restructuring/overwrite/deletion of user notes; graph view, Bases and Canvas only once real memory relationships exist. Workflow learning: only from explicitly authorized AEGIS actions, proposed to the user, never silently created or run; no covert screen monitoring, keylogging or indiscriminate capture. Each phase report gives **main functional acceptance** and **memory/context integration acceptance** results separately.
+
 ## Start immediately
 Phase 0 is both setup and real software: avoid a docs-only delivery. Existing authority docs are already authored in this pack, so Claude should validate/adapt only facts that conflict with the actual environment. **Do not rewrite authority files** during Phase 0 without approval.
 
 ## Later backlog (NOT implementation phases yet)
-Memory workstreams after M0A (designed in ADR-011, not scheduled): AHI-inspired evidence-linked memory investigation and governed revision; adaptive workflow discovery; daily-context learning (each needs explicit consent and its own security gate).
+AHI-inspired memory investigation and workflow learning are no longer separate workstreams; they are delivered incrementally inside product phases (see Integrated memory development). Daily-context learning beyond authorized AEGIS actions stays backlog and needs explicit consent and its own security gate.
 Cross-device Android, Home Assistant/IoT, proactive scheduling, workflow builder/n8n/MCP, multimodal screen vision, audio interruption, RAG embeddings, AHI-style investigation, RouteTune fine-tuned intent routing after verified results, secure Skill Forge with OS-isolated execution, full remote pairing and multi-user mode. Security controls required by these features must precede enabling them.
 
 ## Scope/edge-case rules

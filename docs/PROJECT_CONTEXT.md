@@ -1,5 +1,5 @@
 # PROJECT_CONTEXT.md — Current AEGIS Context Lock
-**Updated:** 2026-10-22 (user-approved status update after Phase 3). **Status:** Phases 0–3 and memory workstream M0 committed (HEAD `e71de65`); vault workstream M0A implemented and verified on this machine, **not yet committed** (awaiting user review).
+**Updated:** 2026-10-22 (user-approved roadmap change: integrated memory development, D24). **Status:** Phases 0–3, M0 and M0A committed (HEAD `24fc13a`). Phase 4 not started.
 
 ## Goal
 Build AEGIS, a genuine Windows-first assistant with original reactive orb, actual model calls, safe file/browser/repo automation, clear approvals, durable state, evidence and measurable evaluation. Reference aesthetic: JARVIS holography + ULTRON energy reactivity + FRIDAY voice minimalism. No copying assets/code. Financial goal: $0 mandatory spend.
@@ -8,6 +8,7 @@ Build AEGIS, a genuine Windows-first assistant with original reactive orb, actua
 - Build feature-first with essential security alongside; functional vertical slices; iterate edge cases later when noncritical.
 - Core architecture locked, avoid arbitrary rewrites. Implement only one phase per request, stop for user review; proposed commit message, no auto commits/pushes/deploy.
 - Claude has user-installed UI/design skills. Verify actual skills at runtime. Do not lock typography, fonts, colors, general layout; orb behavior is required now.
+- Memory is developed inside each product phase (D24, `phases.md` "Integrated memory development"), not as separate milestones; each phase reports functional and memory/context acceptance separately. Nothing beyond M0/M0A memory is implemented yet.
 - Reuse learnings from prior work, including AHI, RouteTune, Aeryon, Perzforge, cybersecurity site, TaskWitness, RafterFlow, Candor, Pactrieve, Concuryx, VeyraQ, Pyrock, LedeSift, Axenloom and many others. IP limits apply.
 
 ## Known work state
@@ -20,7 +21,7 @@ Observed on the user's Windows 11 machine (Node 24.19.0, Python 3.12.0, Ollama 0
 | 2 — File agent | Committed `825baa7` | LangGraph plan → approve → move → verify; journal and recovery tests |
 | 3 — Browser research | Committed `2440179` | See below |
 | M0 — Adaptive memory | Committed `e71de65` | See below |
-| M0A — Vault indexing | Implemented on top of `e71de65`, **uncommitted** | See below |
+| M0A — Vault indexing | Committed `24fc13a` | See below |
 
 Phase 3 verification (2026-10-22):
 - Baseline before edits: pytest 119 passed / 6 skipped; 22 TS tests; Electron smoke all PASS.
