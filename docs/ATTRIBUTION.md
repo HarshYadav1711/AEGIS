@@ -9,6 +9,8 @@ AEGIS is a **new proposed original implementation**. It studies the openly docum
 - FRIDAY: https://github.com/LakshyaBadjatya/Friday
 - Cole Medin: https://github.com/coleam00/local-ai-packaged
 - Dave Ebbelaar: https://github.com/daveebbelaar/ai-cookbook
+- kepano/obsidian-skills (MIT), used as Claude skill references for Obsidian Flavored Markdown: https://github.com/kepano/obsidian-skills
+- The Thinkers Club articles on structuring Obsidian vaults with Claude (ideas only)
 
 No source file or asset from the above repositories is bundled here. `THIRD_PARTY_NOTICES.md` should be created when actual libraries/assets are imported, with pinned version, license and notices. If license obligations conflict with planned distribution, stop and resolve before reuse.
 

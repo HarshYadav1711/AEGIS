@@ -348,6 +348,82 @@ MIGRATIONS: tuple[Migration, ...] = (
             "CREATE INDEX memory_retrievals_fact ON memory_retrievals(fact_id)",
         ),
     ),
+    Migration(
+        version=6,
+        name="vault_index",
+        statements=(
+            # A user-selected Obsidian-compatible folder. The Markdown files are the authority for note
+            # content; these tables are a rebuildable index plus AEGIS's own observation history.
+            # write_area is NULL (read-only) or the one sub-folder AEGIS may create notes in.
+            """
+            CREATE TABLE vaults (
+                id              TEXT PRIMARY KEY,
+                root_path       TEXT NOT NULL,
+                root_identity   TEXT NOT NULL UNIQUE,
+                kind            TEXT NOT NULL CHECK (kind IN ('existing', 'new')),
+                write_area      TEXT CHECK (write_area IS NULL OR write_area = 'AEGIS'),
+                created_at      TEXT NOT NULL,
+                indexed_at      TEXT,
+                index_status    TEXT NOT NULL CHECK (index_status IN ('never', 'indexing', 'ok', 'partial', 'failed')),
+                index_detail    TEXT NOT NULL
+            )
+            """,
+            # One row per note path AEGIS has seen. file_id (volume:file index) follows renames.
+            # author comes only from AEGIS's own write records, never from a note's frontmatter.
+            """
+            CREATE TABLE vault_notes (
+                id              TEXT PRIMARY KEY,
+                vault_id        TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
+                rel_path        TEXT NOT NULL,
+                file_id         TEXT,
+                status          TEXT NOT NULL CHECK (status IN (
+                                    'indexed', 'skipped_secret', 'skipped_large', 'unreadable', 'deleted')),
+                author          TEXT NOT NULL CHECK (author IN ('user', 'aegis_user')),
+                title           TEXT NOT NULL,
+                tags            TEXT NOT NULL,
+                links           TEXT NOT NULL,
+                size            INTEGER,
+                mtime_ns        INTEGER,
+                sha256          TEXT,
+                version         INTEGER NOT NULL CHECK (version >= 1),
+                first_seen_at   TEXT NOT NULL,
+                indexed_at      TEXT NOT NULL,
+                deleted_at      TEXT,
+                UNIQUE (vault_id, rel_path)
+            )
+            """,
+            "CREATE INDEX vault_notes_file ON vault_notes(vault_id, file_id)",
+            # Evidence identity over time: every observed content state (hash only, no text).
+            # valid time = file modification time; recorded time = when AEGIS observed it.
+            """
+            CREATE TABLE vault_note_versions (
+                id          TEXT PRIMARY KEY,
+                note_id     TEXT NOT NULL REFERENCES vault_notes(id) ON DELETE CASCADE,
+                version     INTEGER NOT NULL,
+                change      TEXT NOT NULL CHECK (change IN ('created', 'modified', 'renamed', 'deleted', 'restored')),
+                rel_path    TEXT NOT NULL,
+                sha256      TEXT,
+                size        INTEGER,
+                modified_at TEXT,
+                observed_at TEXT NOT NULL,
+                UNIQUE (note_id, version)
+            )
+            """,
+            # Notes AEGIS itself wrote (exclusive create into the write area): the only source of author=aegis_user.
+            """
+            CREATE TABLE vault_writes (
+                id          TEXT PRIMARY KEY,
+                vault_id    TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
+                rel_path    TEXT NOT NULL,
+                file_id     TEXT NOT NULL,
+                sha256      TEXT NOT NULL,
+                written_at  TEXT NOT NULL,
+                UNIQUE (vault_id, rel_path)
+            )
+            """,
+            "CREATE VIRTUAL TABLE vault_fts USING fts5(title, tags, body, tokenize='unicode61 remove_diacritics 2')",
+        ),
+    ),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

@@ -214,6 +214,14 @@ const DESCRIPTIONS: Record<string, string> = {
   unchanged: 'The correction is identical to the current text.',
   duplicate_memory: 'Another current memory already says exactly this.',
   tool_outcome: 'A verified task outcome cannot be edited; reject or delete it instead.',
+  not_a_vault: 'That folder is neither an Obsidian vault (no .obsidian folder) nor empty. Choose a vault or an empty folder.',
+  vault_exists: 'That folder is already registered as a vault.',
+  vault_not_found: 'This vault is no longer registered.',
+  vault_unavailable: 'The vault folder could not be read (moved, replaced or inaccessible).',
+  read_only_vault: 'This vault is read-only for AEGIS. Allow the AEGIS folder first.',
+  write_area_invalid: 'The AEGIS folder in this vault is not an ordinary folder; nothing was written.',
+  note_not_found: 'This note is not in the index.',
+  note_deleted: 'This note was deleted from the vault.',
 };
 
 async function errorFromResponse(response: Response): Promise<ChatError> {

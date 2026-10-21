@@ -3,6 +3,8 @@
 
 | Project/channel | Public reference | Architectural idea studied | Proposed reuse | Licensing/IP status |
 |---|---|---|---|---|
+| kepano/obsidian-skills | https://github.com/kepano/obsidian-skills | Obsidian Markdown, Bases, JSON Canvas, CLI agent skills | Used as installed Claude skills for format reference; no code copied | MIT (repository license); skills were already installed at user level, not installed by AEGIS |
+| The Thinkers Club (two articles) | https://www.thethinkers.club/p/how-i-structure-obsidian-and-claude , https://www.thethinkers.club/p/building-an-agent-only-obsidian-vault | Personal vault read-only to agents; agent writes in a separate area; human vs AI content separation; citations | Architectural idea only (read-only default, `AEGIS/` area) | Articles, not code; ideas only |
 | Buildonaut Brahma AI | https://github.com/titechprabhasolutions/Brahma-AI | Wide desktop assistant toolset | Independent implementation only | Verify MIT at chosen revision |
 | Buildonaut Brahma Echo | https://github.com/titechprabhasolutions/Brahma-Echo | Windows automation, voice, browser, devices | Independent concepts only | Custom source-available; no copying |
 | Buildonaut Brahma Evo | https://github.com/titechprabhasolutions/Brahma-Ai-Evo | Dynamic skill Forge | Design inspiration, no code | Restrictive source-available; no copying |

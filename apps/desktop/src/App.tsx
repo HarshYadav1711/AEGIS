@@ -6,6 +6,7 @@ import { Diagnostics } from './components/Diagnostics/Diagnostics';
 import { FileTaskHistory } from './components/FileTask/FileTaskHistory';
 import { FileTaskPanel } from './components/FileTask/FileTaskPanel';
 import { MemoryPanel } from './components/Memory/MemoryPanel';
+import { VaultPanel } from './components/Vault/VaultPanel';
 import { Orb } from './components/Orb/Orb';
 import { ResearchHistory, ResearchPanel } from './components/Research/ResearchPanel';
 import { StatePreview } from './components/StatePreview/StatePreview';
@@ -14,6 +15,7 @@ import { useBackendStatus } from './hooks/useBackendStatus';
 import { useChat } from './hooks/useChat';
 import { useFileTasks } from './hooks/useFileTasks';
 import { useMemory } from './hooks/useMemory';
+import { useVault } from './hooks/useVault';
 import { useModelSelection } from './hooks/useModelSelection';
 import { useResearchTasks } from './hooks/useResearchTasks';
 import { useMotionPreference, type MotionPreference } from './hooks/useMotionPreference';
@@ -43,6 +45,7 @@ export function App() {
   const tasks = useFileTasks(coreOnline);
   const research = useResearchTasks(coreOnline);
   // Re-read an open memory panel whenever a chat turn or task may have stored something.
+  const vault = useVault(coreOnline);
   const memory = useMemory(coreOnline, chat.messages.length + tasks.history.length + research.history.length + (chat.busy ? 0 : 1));
   const availableModels = status?.health?.provider?.models ?? [];
   const [model, setModel] = useModelSelection(availableModels);
@@ -179,6 +182,7 @@ export function App() {
         <FileTaskHistory tasks={tasks.history} disabled={tasks.busy || research.busy} onOpen={tasks.open} />
         <ResearchHistory tasks={research.history} disabled={tasks.busy || research.busy} onOpen={research.open} />
         <MemoryPanel state={memory} disabled={!coreOnline} />
+        <VaultPanel state={vault} disabled={!coreOnline} />
         <details className="panel">
           <summary>Display</summary>
           <div className="preview-controls">

@@ -27,6 +27,12 @@
 - Refuse obvious secrets (keys, tokens, passwords, private keys); event log stores ids, not content. Delete removes every version.
 - Retrieved notes are bounded, source-labelled, quoted data and never change tool access, approvals or policy. Memory stays local; it reaches only the user-selected local model.
 
+## Workstream M0A — vaults
+- Vault roots only from the native picker; must be an existing vault (`.obsidian/`) or an empty folder. Refuse links/junctions anywhere in the path, protected/system/app folders, drive roots and network paths; re-check root identity before every scan, open and write.
+- Walk without following links; skip hidden/system entries, non-`.md`, oversize notes and secret-pattern notes; cap notes per vault.
+- Existing vaults read-only; writes only by exclusive create inside an opted-in `AEGIS/` folder that must be an ordinary directory; read back and verify. No edit, rename, move or delete of notes.
+- Vault text is untrusted data: never in model context, system instructions or policy in M0A; FTS5 query syntax neutralised; open-by-id with path re-validated in core and main.
+
 ## Phases 5–7
 - Mic capture explicit and visible, no background recording by default; voice not high-risk approval.
 - Agent delegation does not transfer wider authority. Check actual tool effect and audit history.

@@ -419,7 +419,7 @@ def test_v4_database_upgrades_without_touching_existing_rows(tmp_path: Path) -> 
     conn.close()
 
     status = db.initialize(path)
-    assert status.schema_version == db.LATEST_SCHEMA_VERSION == 5 and status.fts5_available
+    assert status.schema_version == db.LATEST_SCHEMA_VERSION and status.fts5_available
     with sqlite3.connect(path) as check:
         assert check.execute("SELECT title FROM conversations").fetchall() == [("Old chat",)]
         names = {r[0] for r in check.execute("SELECT name FROM sqlite_master")}

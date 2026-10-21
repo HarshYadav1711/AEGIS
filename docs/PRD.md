@@ -25,6 +25,7 @@ Initially a technical single-user Windows desktop. Electron UI contains interact
 | UC-04 | Explain repo | Report with real path/line support where feasible | Read-only workspace; ignore `.env`, credentials, node_modules |
 | UC-05 | Speak a command | Speech transcript + authorized existing workflow | Mic permission and privacy indication; no voice-only high-risk approval |
 | UC-06 | Delegate analysis | Specialist tasks and verified result statuses | Specialists never gain extra permissions |
+| UC-07 | Search my notes (M0A) | Indexed Obsidian-compatible vault search with source path, author and times; open note; add a note to AEGIS/ | Personal vault read-only by default; no overwrite; no vault text to models |
 
 ## 5. Functional requirements
 FR-01 Native Electron startup, readable responsive window; no dead controls. 

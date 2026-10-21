@@ -37,7 +37,15 @@ export type IpcChannel =
   | 'aegis:memory:add'
   | 'aegis:memory:correct'
   | 'aegis:memory:decide'
-  | 'aegis:memory:set-settings';
+  | 'aegis:memory:set-settings'
+  | 'aegis:vault:list'
+  | 'aegis:vault:choose'
+  | 'aegis:vault:reindex'
+  | 'aegis:vault:set-write-area'
+  | 'aegis:vault:remove'
+  | 'aegis:vault:search'
+  | 'aegis:vault:add-note'
+  | 'aegis:vault:open-note';
 
 /**
  * Lifecycle of the local Python core as observed by Electron main.
@@ -216,6 +224,17 @@ export interface AegisBridge {
   /** confirm / reject a memory, or permanently delete every version of it. */
   decideMemory(args: MemoryDecisionArgs): Promise<ChatResult<true>>;
   setMemorySettings(settings: MemorySettings): Promise<ChatResult<MemorySettings>>;
+  listVaults(): Promise<ChatResult<VaultRecord[]>>;
+  /** Opens the native folder picker in main; resolves with null if the user closes it. */
+  chooseVault(): Promise<ChatResult<VaultRecord | null>>;
+  reindexVault(vaultId: string): Promise<ChatResult<VaultRecord>>;
+  setVaultWriteArea(args: VaultWriteAreaArgs): Promise<ChatResult<VaultRecord>>;
+  /** Forgets the vault in AEGIS (index only); never touches its files. */
+  removeVault(vaultId: string): Promise<ChatResult<true>>;
+  searchVaults(query: string): Promise<ChatResult<VaultSearchResult>>;
+  addVaultNote(args: AddVaultNoteArgs): Promise<ChatResult<VaultNote>>;
+  /** Opens the note (path known only to main and the core) in the default Markdown app. */
+  openVaultNote(noteId: string): Promise<ChatResult<true>>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1193,4 +1212,148 @@ export function parseMemorySettingsArgs(value: unknown): MemorySettings | null {
   if (typeof captureEnabled !== 'boolean') return null;
   if (!(project === null || (isString(project) && PROJECT_PATTERN.test(project)))) return null;
   return { captureEnabled, project };
+}
+
+// ---------------------------------------------------------------------------
+// Vault contracts (M0A). Markdown files are the authority; this is AEGIS's index of them.
+// ---------------------------------------------------------------------------
+
+export type VaultIndexStatus = 'never' | 'indexing' | 'ok' | 'partial' | 'failed';
+export type VaultNoteStatus = 'indexed' | 'skipped_secret' | 'skipped_large' | 'unreadable' | 'deleted';
+const VAULT_INDEX_STATUSES: readonly VaultIndexStatus[] = ['never', 'indexing', 'ok', 'partial', 'failed'];
+const VAULT_NOTE_STATUSES: readonly VaultNoteStatus[] = ['indexed', 'skipped_secret', 'skipped_large', 'unreadable', 'deleted'];
+export const MAX_VAULT_NOTE_CHARS = 20_000;
+
+export interface VaultRecord {
+  id: string;
+  rootPath: string;
+  /** 'existing': a vault Obsidian already opened (read-only by default); 'new': an empty folder AEGIS set up. */
+  kind: 'existing' | 'new';
+  /** null = read-only for AEGIS; otherwise the only sub-folder AEGIS may create notes in. */
+  writeArea: string | null;
+  createdAt: string;
+  indexedAt: string | null;
+  indexStatus: VaultIndexStatus;
+  indexDetail: string;
+  counts: Record<string, number>;
+}
+
+export interface VaultNote {
+  id: string;
+  vaultId: string;
+  vaultRoot: string;
+  relPath: string;
+  status: VaultNoteStatus;
+  /** From AEGIS's own write records only: 'aegis_user' = written by AEGIS from text you typed, unchanged since. */
+  author: 'user' | 'aegis_user';
+  /** Note text is untrusted: render as plain text only. */
+  title: string;
+  tags: string[];
+  modifiedAt: string | null;
+  indexedAt: string;
+  firstSeenAt: string;
+  version: number;
+  snippet: string | null;
+}
+
+export interface VaultSearchResult {
+  notes: VaultNote[];
+  vaults: VaultRecord[];
+}
+
+export interface AddVaultNoteArgs {
+  vaultId: string;
+  title: string;
+  body: string;
+}
+
+export interface VaultWriteAreaArgs {
+  vaultId: string;
+  enabled: boolean;
+}
+
+function parseVault(value: unknown): VaultRecord | null {
+  if (!isRecord(value)) return null;
+  const v = value;
+  if (!isUuid(v.id) || !isString(v.root_path) || (v.kind !== 'existing' && v.kind !== 'new')) return null;
+  if (!isNullableString(v.write_area) || !isString(v.created_at) || !isNullableString(v.indexed_at)) return null;
+  if (!oneOf(VAULT_INDEX_STATUSES, v.index_status) || !isString(v.index_detail) || !isRecord(v.counts)) return null;
+  const counts: Record<string, number> = {};
+  for (const [key, n] of Object.entries(v.counts)) {
+    if (typeof n !== 'number' || !Number.isInteger(n)) return null;
+    counts[key] = n;
+  }
+  return {
+    id: v.id,
+    rootPath: v.root_path,
+    kind: v.kind,
+    writeArea: v.write_area,
+    createdAt: v.created_at,
+    indexedAt: v.indexed_at,
+    indexStatus: v.index_status,
+    indexDetail: v.index_detail,
+    counts,
+  };
+}
+
+function parseVaultNote(value: unknown): VaultNote | null {
+  if (!isRecord(value)) return null;
+  const v = value;
+  if (!isUuid(v.id) || !isUuid(v.vault_id) || !isString(v.vault_root) || !isString(v.rel_path)) return null;
+  if (!oneOf(VAULT_NOTE_STATUSES, v.status) || (v.author !== 'user' && v.author !== 'aegis_user')) return null;
+  if (!isString(v.title) || !isStringArray(v.tags) || !isNullableString(v.modified_at)) return null;
+  if (!isString(v.indexed_at) || !isString(v.first_seen_at) || !isNullableInt(v.version)) return null;
+  if (!(v.snippet === undefined || isNullableString(v.snippet))) return null;
+  return {
+    id: v.id,
+    vaultId: v.vault_id,
+    vaultRoot: v.vault_root,
+    relPath: v.rel_path,
+    status: v.status,
+    author: v.author,
+    title: v.title,
+    tags: v.tags,
+    modifiedAt: v.modified_at,
+    indexedAt: v.indexed_at,
+    firstSeenAt: v.first_seen_at,
+    version: (v.version as number | null) ?? 1,
+    snippet: (v.snippet as string | null | undefined) ?? null,
+  };
+}
+
+export function parseVaultList(value: unknown): VaultRecord[] | null {
+  return isRecord(value) ? parseAll(value.vaults, parseVault) : null;
+}
+
+export function parseVaultEnvelope(value: unknown): VaultRecord | null {
+  return isRecord(value) ? parseVault(value.vault) : null;
+}
+
+export function parseVaultNoteEnvelope(value: unknown): VaultNote | null {
+  return isRecord(value) ? parseVaultNote(value.note) : null;
+}
+
+export function parseVaultSearch(value: unknown): VaultSearchResult | null {
+  if (!isRecord(value)) return null;
+  const notes = parseAll(value.notes, parseVaultNote);
+  const vaults = parseAll(value.vaults, parseVault);
+  return notes && vaults ? { notes, vaults } : null;
+}
+
+/** Renderer arguments: ids, a query and typed note text only. No path ever comes from the renderer. */
+export function parseVaultQuery(value: unknown): string | null {
+  return isString(value) && value.length <= 200 ? value : null;
+}
+
+export function parseAddVaultNoteArgs(value: unknown): AddVaultNoteArgs | null {
+  if (!isRecord(value) || !hasExactKeys(value, 'body,title,vaultId') || !isUuid(value.vaultId)) return null;
+  const { title, body } = value;
+  if (!isString(title) || !title.trim() || title.length > 120) return null;
+  if (!isString(body) || !body.trim() || body.length > MAX_VAULT_NOTE_CHARS || body.includes('\u0000')) return null;
+  return { vaultId: value.vaultId, title, body };
+}
+
+export function parseVaultWriteAreaArgs(value: unknown): VaultWriteAreaArgs | null {
+  if (!isRecord(value) || !hasExactKeys(value, 'enabled,vaultId') || !isUuid(value.vaultId)) return null;
+  return typeof value.enabled === 'boolean' ? { vaultId: value.vaultId, enabled: value.enabled } : null;
 }

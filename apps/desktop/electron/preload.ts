@@ -21,6 +21,9 @@ import type {
   MemoryList,
   MemoryRecord,
   MemorySettings,
+  VaultNote,
+  VaultRecord,
+  VaultSearchResult,
   ResearchInterpretation,
   ResearchTaskDetail,
   ResearchTaskSummary,
@@ -59,6 +62,14 @@ const channels = {
   memoryCorrect: 'aegis:memory:correct',
   memoryDecide: 'aegis:memory:decide',
   memorySetSettings: 'aegis:memory:set-settings',
+  vaultList: 'aegis:vault:list',
+  vaultChoose: 'aegis:vault:choose',
+  vaultReindex: 'aegis:vault:reindex',
+  vaultSetWriteArea: 'aegis:vault:set-write-area',
+  vaultRemove: 'aegis:vault:remove',
+  vaultSearch: 'aegis:vault:search',
+  vaultAddNote: 'aegis:vault:add-note',
+  vaultOpenNote: 'aegis:vault:open-note',
 } as const satisfies Record<string, IpcChannel>;
 
 /** Subscribe without ever handing the renderer the IpcRendererEvent (which exposes `sender`). */
@@ -117,6 +128,14 @@ const bridge: AegisBridge = {
   decideMemory: (args) => ipcRenderer.invoke(channels.memoryDecide, args) as Promise<ChatResult<true>>,
   setMemorySettings: (settings) =>
     ipcRenderer.invoke(channels.memorySetSettings, settings) as Promise<ChatResult<MemorySettings>>,
+  listVaults: () => ipcRenderer.invoke(channels.vaultList) as Promise<ChatResult<VaultRecord[]>>,
+  chooseVault: () => ipcRenderer.invoke(channels.vaultChoose) as Promise<ChatResult<VaultRecord | null>>,
+  reindexVault: (id) => ipcRenderer.invoke(channels.vaultReindex, id) as Promise<ChatResult<VaultRecord>>,
+  setVaultWriteArea: (args) => ipcRenderer.invoke(channels.vaultSetWriteArea, args) as Promise<ChatResult<VaultRecord>>,
+  removeVault: (id) => ipcRenderer.invoke(channels.vaultRemove, id) as Promise<ChatResult<true>>,
+  searchVaults: (query) => ipcRenderer.invoke(channels.vaultSearch, query) as Promise<ChatResult<VaultSearchResult>>,
+  addVaultNote: (args) => ipcRenderer.invoke(channels.vaultAddNote, args) as Promise<ChatResult<VaultNote>>,
+  openVaultNote: (id) => ipcRenderer.invoke(channels.vaultOpenNote, id) as Promise<ChatResult<true>>,
 };
 
 contextBridge.exposeInMainWorld('aegis', Object.freeze(bridge));

@@ -9,6 +9,9 @@ import {
   parseMemoryDecisionArgs,
   parseMemoryQueryArgs,
   parseMemorySettingsArgs,
+  parseAddVaultNoteArgs,
+  parseVaultQuery,
+  parseVaultWriteAreaArgs,
   parsePlanDecisionArgs,
   parseSendMessageArgs,
   type AppInfo,
@@ -19,6 +22,7 @@ import type { BackendManager } from './backend';
 import type { ChatService } from './chat';
 import type { FileTaskService } from './files';
 import type { MemoryService } from './memory';
+import type { VaultService } from './vault';
 import type { ResearchService } from './research';
 import { assertTrustedSender, type RendererLocation } from './security';
 
@@ -37,6 +41,7 @@ export function registerIpc(
   files: FileTaskService,
   research: ResearchService,
   memory: MemoryService,
+  vault: VaultService,
   appWindow: () => WebContents | null,
   location: RendererLocation,
 ): void {
@@ -117,6 +122,19 @@ export function registerIpc(
   handleOne('aegis:memory:correct', parseCorrectMemoryArgs, (args) => memory.correct(args));
   handleOne('aegis:memory:decide', parseMemoryDecisionArgs, (args) => memory.decide(args));
   handleOne('aegis:memory:set-settings', parseMemorySettingsArgs, (args) => memory.setSettings(args));
+
+  // Vaults. No channel accepts a path: the vault comes from the native picker, a note is opened by id.
+  handle('aegis:vault:list', () => vault.list());
+  handle('aegis:vault:choose', () => {
+    const contents = appWindow();
+    return vault.choose(contents ? BrowserWindow.fromWebContents(contents) : null);
+  });
+  handleOne('aegis:vault:reindex', uuidArg, (id) => vault.reindex(id));
+  handleOne('aegis:vault:set-write-area', parseVaultWriteAreaArgs, (args) => vault.setWriteArea(args));
+  handleOne('aegis:vault:remove', uuidArg, (id) => vault.remove(id));
+  handleOne('aegis:vault:search', parseVaultQuery, (query) => vault.search(query));
+  handleOne('aegis:vault:add-note', parseAddVaultNoteArgs, (args) => vault.addNote(args));
+  handleOne('aegis:vault:open-note', uuidArg, (id) => vault.openNote(id));
 
   backend.on('status', (status) => {
     const contents = appWindow();

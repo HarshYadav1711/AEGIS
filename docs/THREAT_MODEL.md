@@ -22,6 +22,7 @@ The Python core runs with user privileges. App-level tool checks guard the **LLM
 | T10 | SQLite→privacy | Sensitive logging/state leakage | Scoped local storage, retention, secret exclusion | Secret absent from DB/log fixtures |
 | T11 | Packages→supply chain | Malicious dependency/skills | Maintained stable licensed deps, review before adding | No unauthorized package install |
 | T13 | Memory→model context | Stored or model-proposed text acts as instructions, fake provenance, secret retention | Proposals stay `candidate` until user confirms (DB CHECK); immutable versions; notes JSON-quoted on one line under a data-only header; secret patterns refused; memory not read by file/research policy | `tests/test_memory.py` injection, secret, candidate and scope tests |
+| T14 | Vault→core / model | Path escape via links, overwrite of personal notes, spoofed authorship, injected instructions, secret indexing | Picker-only roots, no-follow walk, scope re-check, create-only `AEGIS/` area, authorship from write records, no vault text to models, secret skip | `tests/test_vaults.py` junction, read-only, spoofing, injection, secret tests |
 | T12 | Orb→user interpretation | Fake progress or mic recording | Backend state binding and explicit capture status | Preview labeled; mic indicator honest |
 
 ## Highest severity blockers

@@ -1,6 +1,6 @@
-import { app, dialog, type BrowserWindow } from 'electron';
+import { app, dialog, shell, type BrowserWindow } from 'electron';
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import type { BackendManager } from './backend';
@@ -26,6 +26,8 @@ import type { BackendManager } from './backend';
  * runMemoryScenario): remember in chat -> restart -> recall -> correct in the Memory panel -> recall.
  * AEGIS_SMOKE_MEMORY_PHASE=remember|recall splits it across two app launches that share
  * AEGIS_SMOKE_USER_DATA, so the restart in between is a full application restart.
+ * With AEGIS_SMOKE_VAULT_DIR=<new or empty folder> it runs the vault acceptance scenario (see
+ * runVaultScenario): create note -> index -> search -> edit externally -> re-index -> verify.
  * Prints one `AEGIS_SMOKE_RESULT <json>` line and returns the exit code.
  */
 export async function runSmokeTest(window: BrowserWindow, backend: BackendManager): Promise<number> {
@@ -86,12 +88,14 @@ export async function runSmokeTest(window: BrowserWindow, backend: BackendManage
     record('renderer has no process', probe.process === 'undefined', probe.process);
     const expectedKeys = [
       'addMemory',
+      'addVaultNote',
       'approveFilePlan',
       'approveResearchPlan',
       'cancelFileTask',
       'cancelGeneration',
       'cancelResearchTask',
       'chooseFolderForTask',
+      'chooseVault',
       'correctMemory',
       'createConversation',
       'decideMemory',
@@ -106,17 +110,23 @@ export async function runSmokeTest(window: BrowserWindow, backend: BackendManage
       'listFileTasks',
       'listMemories',
       'listResearchTasks',
+      'listVaults',
       'onBackendStatus',
       'onChatEvent',
       'onFileTaskEvent',
       'openResearchReport',
+      'openVaultNote',
+      'reindexVault',
       'rejectFilePlan',
       'rejectResearchPlan',
+      'removeVault',
       'replanFileTask',
       'restartBackend',
       'saveResearchReport',
+      'searchVaults',
       'sendMessage',
       'setMemorySettings',
+      'setVaultWriteArea',
     ];
     record('bridge exposes only the typed API', JSON.stringify(probe.bridgeKeys) === JSON.stringify(expectedKeys), probe.bridgeKeys.join(','));
 
@@ -277,6 +287,29 @@ export async function runSmokeTest(window: BrowserWindow, backend: BackendManage
       JSON.stringify(memorySecret),
     );
 
+    // Vault IPC accepts ids, a query string and typed note text only: never a path.
+    const vaultRejected = await evaluate<string[]>(`(async () => {
+      const out = [];
+      const id = crypto.randomUUID();
+      const attempts = [
+        () => window.aegis.searchVaults({ q: 'x' }),
+        () => window.aegis.addVaultNote({ vaultId: id, title: 't', body: 'b', path: 'C:/Windows/x.md' }),
+        () => window.aegis.openVaultNote('../../secret.md'),
+        () => window.aegis.setVaultWriteArea({ vaultId: id, enabled: 'yes' }),
+        () => window.aegis.reindexVault(42),
+        () => window.aegis.reindexVault('C:/Users'),
+      ];
+      for (const attempt of attempts) {
+        try { await attempt(); out.push('accepted'); } catch { out.push('rejected'); }
+      }
+      return out;
+    })()`);
+    record(
+      'malformed vault IPC arguments (paths, flags, ids) are rejected',
+      vaultRejected.every((r) => r === 'rejected'),
+      vaultRejected.join(','),
+    );
+
     const port = backend.port;
     if (port !== null) {
       const noAuth = await fetch(`http://127.0.0.1:${port}/health`).then((r) => r.status, () => -1);
@@ -344,6 +377,12 @@ export async function runSmokeTest(window: BrowserWindow, backend: BackendManage
       await runMemoryScenario({ evaluate, record, screenshot, waitForOrb, backend, model: memoryModel }, phase, readyState);
     } else {
       console.log('[smoke] real memory scenario NOT CONFIGURED (set AEGIS_SMOKE_MEMORY_MODEL)');
+    }
+    const vaultDir = process.env.AEGIS_SMOKE_VAULT_DIR?.trim();
+    if (vaultDir) {
+      await runVaultScenario({ evaluate, record, screenshot, waitForOrb, backend, model: '' }, vaultDir);
+    } else {
+      console.log('[smoke] vault acceptance scenario NOT CONFIGURED (set AEGIS_SMOKE_VAULT_DIR)');
     }
     const researchModel = process.env.AEGIS_SMOKE_RESEARCH_MODEL?.trim();
     const researchDir = process.env.AEGIS_SMOKE_RESEARCH_DIR?.trim();
@@ -754,6 +793,99 @@ async function runMemoryScenario(ctx: ChatScenarioContext, phase: string, readyS
     );
     await screenshot('15-memory-recalled-corrected');
   }
+}
+
+/**
+ * REAL vault acceptance run through the UI: register an empty folder as a new vault → create a note in
+ * its AEGIS/ area → search → edit the file outside AEGIS (plain fs write from this process) → re-index →
+ * the search shows the new text and the note is now user-authored. Harness-only stand-ins: the native
+ * folder dialog is answered with AEGIS_SMOKE_VAULT_DIR, and shell.openPath is recorded instead of
+ * launching an external editor. Obsidian itself is not involved.
+ */
+async function runVaultScenario(ctx: ChatScenarioContext, vaultDir: string): Promise<void> {
+  const { evaluate, record, screenshot } = ctx;
+  const flat = (text: string) => text.replace(/\s+/g, ' ');
+  const waitFor = async (predicate: () => Promise<boolean>, timeoutMs: number) => {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (await predicate()) return true;
+      await delay(200);
+    }
+    return false;
+  };
+  const setValue = (selector: string, value: string, proto: 'HTMLInputElement' | 'HTMLTextAreaElement') =>
+    evaluate(`(() => {
+      const el = document.querySelector(${JSON.stringify(selector)});
+      Object.getOwnPropertyDescriptor(${proto}.prototype, 'value').set.call(el, ${JSON.stringify(value)});
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`);
+  const panel = () => evaluate<string>(`document.querySelector('details.vault')?.innerText ?? ''`);
+  const clickText = (label: string) =>
+    evaluate(`[...document.querySelectorAll('details.vault button')].find((b) => b.textContent === ${JSON.stringify(label)})?.click()`);
+  const results = () =>
+    evaluate<{ id: string; text: string }[]>(`[...document.querySelectorAll('details.vault [data-note-id]')]
+      .map((li) => ({ id: li.dataset.noteId, text: li.innerText }))`);
+  const searchFor = async (q: string) => {
+    await setValue('#vault-search', q, 'HTMLInputElement');
+    await delay(900);
+  };
+
+  mkdirSync(vaultDir, { recursive: true });
+  record('acceptance vault folder starts empty', readdirSync(vaultDir).length === 0, vaultDir);
+  await evaluate(`(() => { const d = document.querySelector('details.vault'); if (!d.open) d.open = true; })()`);
+  await delay(300);
+  dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [vaultDir] })) as unknown as typeof dialog.showOpenDialog;
+  await clickText('Add vault…');
+  const added = await waitFor(async () => /new AEGIS vault/.test(await panel()), 20_000);
+  record('empty folder registered as a new vault with an AEGIS/ write area', added && /AEGIS may add notes in AEGIS\//.test(await panel()),
+    flat(await panel()).slice(0, 300));
+
+  // Pick this scenario's vault explicitly (never whichever writable vault happens to be first).
+  await evaluate(`(() => {
+    const select = document.querySelector('#vault-target');
+    const option = [...select.options].find((o) => o.textContent === ${JSON.stringify(path.resolve(vaultDir))});
+    if (!option) throw new Error('acceptance vault not offered as a target');
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(select, option.value);
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  })()`);
+  await setValue('#vault-note-title', 'Acceptance note', 'HTMLInputElement');
+  await setValue('#vault-note-body', 'The calibration code is Heron-11.', 'HTMLTextAreaElement');
+  await delay(150);
+  await clickText('Create note (never overwrites)');
+  const created = await waitFor(async () => /Created AEGIS\/Acceptance note\.md/.test(await panel()), 20_000);
+  const file = path.join(vaultDir, 'AEGIS', 'Acceptance note.md');
+  const onDisk = existsSync(file) ? readFileSync(file, 'utf8') : '';
+  record('note created in the AEGIS area on disk', created && onDisk.includes('Heron-11') && onDisk.includes('aegis_author: user-via-aegis'),
+    onDisk.slice(0, 160).replace(/\n/g, '\\n'));
+
+  await searchFor('heron');
+  const first = await waitFor(async () => (await results()).some((r) => r.text.includes('Acceptance note')), 10_000);
+  const hit = (await results())[0];
+  record('search finds the note with its source, author and times', first && !!hit && /AEGIS\/Acceptance note\.md/.test(hit.text)
+    && /added via AEGIS/.test(hit.text) && /modified/.test(hit.text) && /indexed/.test(hit.text), flat(hit?.text ?? ''));
+  await screenshot('16-vault-indexed');
+
+  // Edit outside AEGIS, as Obsidian or any editor would: the core learns of it only by re-scanning.
+  writeFileSync(file, onDisk.replace('Heron-11', 'Ibis-12'), 'utf8');
+  await clickText('Re-index now');
+  const reindexed = await waitFor(async () => /Re-indexed: 0 new, 1 changed/.test(await panel()), 20_000);
+  record('re-index reports exactly one changed note', reindexed, flat(await panel()).slice(0, 300));
+  await searchFor('ibis');
+  const updated = await waitFor(async () => (await results()).some((r) => r.text.includes('Acceptance note')), 10_000);
+  const after = (await results())[0];
+  record('search shows the externally edited content; it is now labelled as your note (v2)',
+    updated && !!after && /your note/.test(after.text) && /v2/.test(after.text), flat(after?.text ?? ''));
+  await searchFor('heron');
+  record('the old text is no longer found', await waitFor(async () => (await results()).length === 0, 5_000));
+  await screenshot('17-vault-edited');
+
+  const opened: string[] = [];
+  shell.openPath = (async (p: string) => { opened.push(p); return ''; }) as typeof shell.openPath;
+  await searchFor('ibis');
+  await evaluate(`[...document.querySelectorAll('details.vault [data-note-id] button')].find((b) => b.textContent === 'Open')?.click()`);
+  await waitFor(async () => opened.length > 0, 5_000);
+  record('Open resolves the indexed note to its file inside the vault (launch recorded by harness)',
+    opened.length === 1 && path.resolve(opened[0] ?? '') === path.resolve(file), opened.join(','));
 }
 
 /** Average CPU% per Electron process type over a window, from Electron's own metrics. */

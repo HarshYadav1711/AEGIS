@@ -1,5 +1,5 @@
 # PROJECT_CONTEXT.md — Current AEGIS Context Lock
-**Updated:** 2026-10-22 (user-approved status update after Phase 3). **Status:** Phases 0–3 committed (HEAD `2440179`); memory workstream M0 implemented and verified on this machine, **not yet committed** (awaiting user review).
+**Updated:** 2026-10-22 (user-approved status update after Phase 3). **Status:** Phases 0–3 and memory workstream M0 committed (HEAD `e71de65`); vault workstream M0A implemented and verified on this machine, **not yet committed** (awaiting user review).
 
 ## Goal
 Build AEGIS, a genuine Windows-first assistant with original reactive orb, actual model calls, safe file/browser/repo automation, clear approvals, durable state, evidence and measurable evaluation. Reference aesthetic: JARVIS holography + ULTRON energy reactivity + FRIDAY voice minimalism. No copying assets/code. Financial goal: $0 mandatory spend.
@@ -19,7 +19,8 @@ Observed on the user's Windows 11 machine (Node 24.19.0, Python 3.12.0, Ollama 0
 | 1 — Real AI conversation | Committed `983d617` | Ollama chat + SQLite persistence; real-model smoke runs only when `AEGIS_SMOKE_CHAT_MODEL` is set |
 | 2 — File agent | Committed `825baa7` | LangGraph plan → approve → move → verify; journal and recovery tests |
 | 3 — Browser research | Committed `2440179` | See below |
-| M0 — Adaptive memory | Implemented on top of `2440179`, **uncommitted** | See below |
+| M0 — Adaptive memory | Committed `e71de65` | See below |
+| M0A — Vault indexing | Implemented on top of `e71de65`, **uncommitted** | See below |
 
 Phase 3 verification (2026-10-22):
 - Baseline before edits: pytest 119 passed / 6 skipped; 22 TS tests; Electron smoke all PASS.
@@ -34,6 +35,13 @@ M0 verification (2026-10-22):
 - Live `qwen3:4b`: extraction returned schema-valid candidates (~5 s); remember → core restart → recall `Zephyr-42` → correction → recall `Orion-7` only.
 - Windows GUI (smoke harness, real model, real UI clicks): same scenario with a core process restart, and again split across two full app launches sharing one profile; all checks PASS.
 - Known limits: lexical FTS5 retrieval (no synonyms); conflict detection only by identical subject label; `Remember …` messages are stored verbatim (kind/subject by regex); deleting a memory does not delete the chat message it came from; single user, project scope is a manual label.
+
+M0A verification (2026-10-22):
+- Baseline before edits: pytest 223 passed / 11 skipped; 30 TS tests.
+- After: pytest 236 passed / 11 skipped; 33 TS tests; typecheck and lint PASS.
+- Windows GUI acceptance (smoke harness; native folder dialog answered by the harness, external open recorded instead of launched): empty folder → new vault → note created in `AEGIS/` → search → file edited outside AEGIS → re-index (1 changed) → search shows new text, labelled as the user's note v2, old text gone. PASS.
+- Obsidian app and `obsidian` CLI are NOT installed on this machine; compatibility rests on Markdown/frontmatter/wikilink parsing only.
+- Environment note: the existing smoke check "full motion animates the orb" failed intermittently in this session on the committed baseline too (window not painted while covered); not caused by M0A.
 
 Design (fonts, palette, layout) remains open per D09. Phase 4 has not started.
 

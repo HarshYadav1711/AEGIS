@@ -11,6 +11,7 @@ Report environment versions, hardware (if known), model identifier/revision, inp
 - Phase 4: repository report against frozen fixture with real file citations; no changes in fixture; secret/large/binary exclusions.
 - Phase 5: user-recorded real mic/transcript/TTS smoke, denied mic and missing device error state.
 - Phase 6: actual planner/executor/reviewer transitions, tool authorization checks and bounded retry.
+- Memory M0/M0A: remember → restart → recall → correct → recall with a real model; vault create note → index → search → external edit → re-index → verify on a real Windows run; state explicitly whether the Obsidian app/CLI was exercised.
 - Phase 7: fresh-clone install, Windows executable boot, repeat end-to-end fixture tasks, document capabilities and gaps, evaluate held-out prompts, no fabricated success percent.
 
 ## Core measurements

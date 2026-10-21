@@ -141,6 +141,27 @@ $env:AEGIS_SMOKE_MEMORY_MODEL = 'qwen3:4b'; npm --prefix apps\desktop run smoke
 Set `AEGIS_SMOKE_MEMORY_PHASE` to `remember`, then `recall`, with the same `AEGIS_SMOKE_USER_DATA`
 folder for both runs to make the restart a full application restart.
 
+## Vaults (workstream M0A)
+
+Open **Vaults** in the bottom drawer and choose **Add vault…**. Pick either an existing Obsidian vault
+(a folder with `.obsidian/`, registered **read-only**) or an empty folder (a new AEGIS vault whose
+`AEGIS/` folder AEGIS may write to). Any other folder is refused.
+
+- **Indexed:** `.md` files up to 1 MB (max 5000 per vault), not inside hidden folders (`.obsidian`,
+  `.git`, `.trash`), never through links or junctions. Notes that look like they contain secrets are
+  skipped. Title, tags, aliases and wikilinks come from frontmatter and text.
+- **Search** re-scans a vault first if its index is more than 10 s old, so edits made in Obsidian or any
+  editor show up; **Re-index now** does it immediately. Each change is kept as a hashed version.
+- **Open** hands the note to your default Markdown app. **Create note** writes a new file in `AEGIS/`
+  only and never overwrites; it shows as "added via AEGIS" until edited outside AEGIS.
+- Note text is only searched; it is not sent to the model. **Remove** forgets the index; files stay.
+
+GUI acceptance run (needs a new or empty folder):
+
+```powershell
+$env:AEGIS_SMOKE_VAULT_DIR = "$env:TEMP\aegis-vault-check"; npm --prefix apps\desktop run smoke
+```
+
 ## Troubleshooting
 
 - **"The isolated browser could not start"** on a research task: run `scripts\setup.ps1` again
