@@ -39,6 +39,7 @@ from langgraph.graph import END, START, StateGraph
 from playwright.async_api import Error as PlaywrightError
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from app.memory import adaptive as memory
 from app.models.base import (
     ChatMessage,
     GenerationOptions,
@@ -622,6 +623,22 @@ class ResearchManager:
         saved = await asyncio.to_thread(_write_new_file, scope, name, task["report_markdown"], task["report_sha256"])
         if not journal.record_saved(self._db, task_id, str(saved)):
             raise TaskBusy("not_awaiting_save")
+        self._remember_outcome(task_id, str(saved))
+
+    def _remember_outcome(self, task_id: str, saved: str) -> None:
+        """Record the verified, saved report as a task experience (text built by code, not by the model)."""
+        task = journal.get_task(self._db, task_id)
+        read = [s for s in journal.sources(self._db, task_id) if s["status"] == "extracted"]
+        hosts = sorted({urlsplit(s["final_url"] or s["requested_url"]).hostname or "?" for s in read})
+        request = " ".join(task["request_text"].split())[:160]
+        try:
+            memory.record_task_outcome(
+                self._db, source_type="research_task", task_id=task_id, observed_at=task["updated_at"],
+                content=f'Research task completed for the request "{request}": {len(read)} page(s) read from '
+                        f"{', '.join(hosts)}; report saved and verified at {saved}.",
+            )
+        except Exception:  # the saved report is already journalled; a memory failure must not change that
+            log.exception("could not record memory for research task %s", task_id)
 
     async def wait_idle(self, task_id: str, timeout: float = 30.0) -> None:
         running = self._running.get(task_id)

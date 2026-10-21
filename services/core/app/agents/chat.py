@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from app.agents import memory_extract
+from app.memory import adaptive as memory
 from app.memory import conversations as store
 from app.models.base import (
     ChatMessage,
@@ -38,7 +40,9 @@ SYSTEM_PROMPT = (
     "You have no tools in this chat: you cannot open or change files, browse the web, run programs, "
     "or act on the computer. Only if the user asks for one of those actions, say you cannot do it here, "
     "and never claim to have done it. AEGIS has one separate, user-approved file tool that you do not control: "
-    "if the user wants files sorted, suggest they ask \"Organize the files in a folder by type\"."
+    "if the user wants files sorted, suggest they ask \"Organize the files in a folder by type\". "
+    "AEGIS keeps a local memory that the user controls in the Memory panel; it is saved by AEGIS, not by you. "
+    "Only say something was remembered if an AEGIS memory note in this conversation says so."
 )
 HISTORY_LIMIT = 20
 TOTAL_TIMEOUT_S = 300.0
@@ -79,6 +83,7 @@ class GenerationManager:
         self._options = options or GenerationOptions()
         self._total_timeout_s = total_timeout_s
         self._active: dict[str, Generation] = {}
+        self._background: set[asyncio.Task[None]] = set()
 
     def get(self, message_id: str) -> Generation | None:
         return self._active.get(message_id)
@@ -100,14 +105,46 @@ class GenerationManager:
     async def shutdown(self) -> None:
         for message_id in list(self._active):
             await self.cancel(message_id, "shutdown")
+        for task in list(self._background):
+            task.cancel()
+        if self._background:
+            await asyncio.wait(self._background, timeout=5.0)
 
-    def _context(self, turn: store.Turn) -> list[ChatMessage]:
+    def _context(self, turn: store.Turn) -> tuple[list[ChatMessage], memory.Capture]:
         prior = store.history(self._db, turn.user.conversation_id, before_seq=turn.user.seq, limit=HISTORY_LIMIT)
+        # Memory is a separate, labelled system note; the user's message is passed on unchanged.
+        capture = memory.capture_message(
+            self._db, message_id=turn.user.id, conversation_id=turn.user.conversation_id,
+            text=turn.user.content, observed_at=turn.user.created_at,
+        )
+        notes = memory.retrieve(self._db, turn.user.content)
+        memory.record_retrievals(self._db, turn.assistant.id, notes)
+        block = memory.context_block(notes, capture)
         return [
             ChatMessage("system", SYSTEM_PROMPT),
+            *([ChatMessage("system", block)] if block else []),
             *(ChatMessage(m.role, m.content) for m in prior),
             ChatMessage("user", turn.user.content),
-        ]
+        ], capture
+
+    def _extract_later(self, turn: store.Turn, model: str) -> None:
+        """Propose memory candidates from a standing instruction, after the reply (never blocks the chat)."""
+
+        async def run() -> None:
+            try:
+                found = await memory_extract.extract(self._adapter, model, turn.user.content)
+                memory.propose(
+                    self._db, message_id=turn.user.id, conversation_id=turn.user.conversation_id,
+                    observed_at=turn.user.created_at, model=model, candidates=found,
+                )
+            except (ProviderError, TimeoutError, ValueError) as error:
+                log.warning("memory extraction skipped for %s: %s", turn.user.id, error)
+            except Exception:
+                log.exception("memory extraction failed for %s", turn.user.id)
+
+        task = asyncio.create_task(run(), name=f"memory-extract-{turn.user.id}")
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
 
     async def _run(self, generation: Generation, turn: store.Turn) -> None:
         message_id = turn.assistant.id
@@ -138,8 +175,9 @@ class GenerationManager:
             generation.queue.put_nowait(event)
 
         try:
+            context, capture = self._context(turn)
             async with asyncio.timeout(self._total_timeout_s):
-                async for item in self._adapter.stream_chat(model, self._context(turn), self._options):
+                async for item in self._adapter.stream_chat(model, context, self._options):
                     if isinstance(item, TextDelta):
                         if not parts:
                             store.mark_streaming(self._db, message_id, provider)
@@ -160,6 +198,12 @@ class GenerationManager:
                 prompt_tokens=result.prompt_tokens,
                 completion_tokens=result.completion_tokens,
             )
+            if (
+                capture.outcome == "not_requested"
+                and memory_extract.worth_extracting(turn.user.content)
+                and memory.get_settings(self._db)["capture_enabled"]
+            ):
+                self._extract_later(turn, model)
         except ProviderError as error:
             finish("failed", error_code=error.code, error_detail=error.detail)
         except TimeoutError:

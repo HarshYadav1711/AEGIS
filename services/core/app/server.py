@@ -15,7 +15,7 @@ from fastapi import FastAPI
 from app.agents.chat import GenerationManager
 from app.agents.file_agent import FileTaskManager, recover_interrupted
 from app.agents.research_agent import ResearchManager
-from app.api import chat, file_tasks, health, research_tasks
+from app.api import chat, file_tasks, health, memory, research_tasks
 from app.api.security import LocalAuthMiddleware
 from app.config import Settings
 from app.memory import conversations, db
@@ -116,6 +116,7 @@ def create_app(
     app.include_router(chat.router)
     app.include_router(file_tasks.router)
     app.include_router(research_tasks.router)
+    app.include_router(memory.router)
     app.add_middleware(LocalAuthMiddleware, token=settings.session_token)
 
     @app.middleware("http")

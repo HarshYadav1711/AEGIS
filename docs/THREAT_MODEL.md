@@ -21,6 +21,7 @@ The Python core runs with user privileges. App-level tool checks guard the **LLM
 | T09 | Interrupt→recovery | Duplicate irreversible action | Operation IDs, explicit reconcile, no blind retry | Interrupted action stays unknown until checked |
 | T10 | SQLite→privacy | Sensitive logging/state leakage | Scoped local storage, retention, secret exclusion | Secret absent from DB/log fixtures |
 | T11 | Packages→supply chain | Malicious dependency/skills | Maintained stable licensed deps, review before adding | No unauthorized package install |
+| T13 | Memory→model context | Stored or model-proposed text acts as instructions, fake provenance, secret retention | Proposals stay `candidate` until user confirms (DB CHECK); immutable versions; notes JSON-quoted on one line under a data-only header; secret patterns refused; memory not read by file/research policy | `tests/test_memory.py` injection, secret, candidate and scope tests |
 | T12 | Orb→user interpretation | Fake progress or mic recording | Backend state binding and explicit capture status | Preview labeled; mic indicator honest |
 
 ## Highest severity blockers

@@ -4,6 +4,11 @@ import {
   isUuid,
   parseInterpretArgs,
   parseInterpretResearchArgs,
+  parseAddMemoryArgs,
+  parseCorrectMemoryArgs,
+  parseMemoryDecisionArgs,
+  parseMemoryQueryArgs,
+  parseMemorySettingsArgs,
   parsePlanDecisionArgs,
   parseSendMessageArgs,
   type AppInfo,
@@ -13,6 +18,7 @@ import {
 import type { BackendManager } from './backend';
 import type { ChatService } from './chat';
 import type { FileTaskService } from './files';
+import type { MemoryService } from './memory';
 import type { ResearchService } from './research';
 import { assertTrustedSender, type RendererLocation } from './security';
 
@@ -30,6 +36,7 @@ export function registerIpc(
   chat: ChatService,
   files: FileTaskService,
   research: ResearchService,
+  memory: MemoryService,
   appWindow: () => WebContents | null,
   location: RendererLocation,
 ): void {
@@ -103,6 +110,13 @@ export function registerIpc(
     return research.save(taskId, contents ? BrowserWindow.fromWebContents(contents) : null);
   });
   handleOne('aegis:research:open-report', uuidArg, (taskId) => research.openReport(taskId));
+
+  // Memory. Arguments are text and ids only; the core decides status, verification and provenance.
+  handleOne('aegis:memory:list', parseMemoryQueryArgs, (args) => memory.list(args));
+  handleOne('aegis:memory:add', parseAddMemoryArgs, (args) => memory.add(args));
+  handleOne('aegis:memory:correct', parseCorrectMemoryArgs, (args) => memory.correct(args));
+  handleOne('aegis:memory:decide', parseMemoryDecisionArgs, (args) => memory.decide(args));
+  handleOne('aegis:memory:set-settings', parseMemorySettingsArgs, (args) => memory.setSettings(args));
 
   backend.on('status', (status) => {
     const contents = appWindow();

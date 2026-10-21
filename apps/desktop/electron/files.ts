@@ -201,6 +201,19 @@ const DESCRIPTIONS: Record<string, string> = {
   root_changed: 'The folder changed while saving; nothing was overwritten. Try again.',
   verify_failed: 'The written file did not match the report; check it before use.',
   write_failed: 'The report could not be written to that folder.',
+  memory_not_found: 'This memory no longer exists.',
+  secret_detected: 'This looks like a password, key or token; AEGIS does not store secrets.',
+  memory_too_long: 'A memory can be at most 500 characters.',
+  empty_memory: 'A memory needs some text.',
+  no_project: 'Set a current project first, or save the memory as global.',
+  invalid_project: 'Project names use letters, digits, spaces, ".", "_" or "-" (max 40).',
+  expiry_in_past: 'The expiry date must be in the future.',
+  not_current: 'Only the current version of a memory can be changed; this one was already replaced or rejected.',
+  not_reviewable: 'Only a candidate or disputed memory can be confirmed.',
+  expired: 'This memory has expired; add it again if it is still true.',
+  unchanged: 'The correction is identical to the current text.',
+  duplicate_memory: 'Another current memory already says exactly this.',
+  tool_outcome: 'A verified task outcome cannot be edited; reject or delete it instead.',
 };
 
 async function errorFromResponse(response: Response): Promise<ChatError> {

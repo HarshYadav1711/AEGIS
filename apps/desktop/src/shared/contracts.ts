@@ -32,7 +32,12 @@ export type IpcChannel =
   | 'aegis:research:reject'
   | 'aegis:research:cancel'
   | 'aegis:research:save'
-  | 'aegis:research:open-report';
+  | 'aegis:research:open-report'
+  | 'aegis:memory:list'
+  | 'aegis:memory:add'
+  | 'aegis:memory:correct'
+  | 'aegis:memory:decide'
+  | 'aegis:memory:set-settings';
 
 /**
  * Lifecycle of the local Python core as observed by Electron main.
@@ -205,6 +210,12 @@ export interface AegisBridge {
   saveResearchReport(taskId: string): Promise<ChatResult<ResearchTaskDetail | null>>;
   /** Opens the saved report (path known only to main and the core) in the default app. */
   openResearchReport(taskId: string): Promise<ChatResult<true>>;
+  listMemories(args: MemoryQueryArgs): Promise<ChatResult<MemoryList>>;
+  addMemory(args: AddMemoryArgs): Promise<ChatResult<{ memory: MemoryRecord; outcome: MemoryAddOutcome }>>;
+  correctMemory(args: CorrectMemoryArgs): Promise<ChatResult<MemoryRecord>>;
+  /** confirm / reject a memory, or permanently delete every version of it. */
+  decideMemory(args: MemoryDecisionArgs): Promise<ChatResult<true>>;
+  setMemorySettings(settings: MemorySettings): Promise<ChatResult<MemorySettings>>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -994,4 +1005,192 @@ export function parseInterpretResearchArgs(value: unknown): InterpretResearchArg
   if (typeof text !== 'string' || text.trim().length === 0 || text.length > MAX_FILE_REQUEST_CHARS) return null;
   if (typeof model !== 'string' || !MODEL_PATTERN.test(model)) return null;
   return { text, model };
+}
+
+// ---------------------------------------------------------------------------
+// Memory contracts (workstream M0)
+// ---------------------------------------------------------------------------
+
+export type MemoryKind = 'fact' | 'preference' | 'inference' | 'experience';
+export type MemoryStatus = 'candidate' | 'active' | 'disputed' | 'superseded' | 'rejected';
+export type MemoryVerification = 'user_stated' | 'user_confirmed' | 'tool_verified' | 'model_proposed';
+const MEMORY_KINDS: readonly MemoryKind[] = ['fact', 'preference', 'inference', 'experience'];
+const MEMORY_STATUSES: readonly MemoryStatus[] = ['candidate', 'active', 'disputed', 'superseded', 'rejected'];
+const MEMORY_VERIFICATIONS: readonly MemoryVerification[] = ['user_stated', 'user_confirmed', 'tool_verified', 'model_proposed'];
+export const MAX_MEMORY_CHARS = 500;
+const MAX_MEMORY_QUERY = 200;
+const PROJECT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,39}$/;
+
+/** The internal event a memory came from, as recorded by the core (never from model output). */
+export interface MemorySource {
+  kind: string;
+  sourceType: string;
+  sourceId: string | null;
+  conversationId: string | null;
+  at: string;
+  detail: string;
+}
+
+export interface MemoryRecord {
+  id: string;
+  lineageId: string;
+  version: number;
+  kind: MemoryKind;
+  subject: string | null;
+  /** User- or model-originated text: render as plain text only. */
+  content: string;
+  scope: string;
+  status: MemoryStatus;
+  verification: MemoryVerification;
+  supersedesId: string | null;
+  supersededBy: string | null;
+  conflictsWith: string | null;
+  observedAt: string;
+  recordedAt: string;
+  expiresAt: string | null;
+  statusReason: string | null;
+  expired: boolean;
+  /** Active and unexpired: the only memories ever given to the model. */
+  current: boolean;
+  source: MemorySource | null;
+  usedCount: number;
+}
+
+export interface MemorySettings {
+  captureEnabled: boolean;
+  project: string | null;
+}
+
+export interface MemoryList {
+  memories: MemoryRecord[];
+  settings: MemorySettings;
+}
+
+export interface MemoryQueryArgs {
+  query: string;
+  includeHistory: boolean;
+}
+
+export interface AddMemoryArgs {
+  content: string;
+  kind: 'fact' | 'preference';
+  subject: string | null;
+  scope: 'global' | 'project';
+  /** YYYY-MM-DD, or null for no expiry. */
+  expiresOn: string | null;
+}
+
+export interface CorrectMemoryArgs {
+  id: string;
+  content: string;
+}
+
+export interface MemoryDecisionArgs {
+  id: string;
+  action: 'confirm' | 'reject' | 'delete';
+}
+
+export type MemoryAddOutcome = 'saved' | 'duplicate' | 'disputed';
+
+const oneOf = <T extends string>(values: readonly T[], v: unknown): v is T =>
+  isString(v) && (values as readonly string[]).includes(v);
+
+function hasExactKeys(value: Record<string, unknown>, keys: string): boolean {
+  return Object.keys(value).sort().join(',') === keys;
+}
+
+function parseMemorySource(value: unknown): MemorySource | null {
+  if (!isRecord(value)) return null;
+  const { kind, source_type, source_id, conversation_id, at, detail } = value;
+  if (!isString(kind) || !isString(source_type) || !isString(at) || !isString(detail)) return null;
+  if (!isNullableString(source_id) || !isNullableString(conversation_id)) return null;
+  return { kind, sourceType: source_type, sourceId: source_id, conversationId: conversation_id, at, detail };
+}
+
+export function parseMemoryRecord(value: unknown): MemoryRecord | null {
+  if (!isRecord(value)) return null;
+  const v = value;
+  if (!isUuid(v.id) || !isUuid(v.lineage_id) || typeof v.version !== 'number' || !Number.isInteger(v.version)) return null;
+  if (!oneOf(MEMORY_KINDS, v.kind) || !oneOf(MEMORY_STATUSES, v.status)) return null;
+  if (!oneOf(MEMORY_VERIFICATIONS, v.verification) || !isString(v.content) || !isString(v.scope)) return null;
+  const optional = [v.subject, v.supersedes_id, v.superseded_by, v.conflicts_with, v.expires_at, v.status_reason];
+  if (!optional.every(isNullableString) || !isString(v.observed_at) || !isString(v.recorded_at)) return null;
+  if (typeof v.expired !== 'boolean' || typeof v.current !== 'boolean' || !isNullableInt(v.used_count)) return null;
+  const source = v.source === null ? null : parseMemorySource(v.source);
+  if (v.source !== null && source === null) return null;
+  return {
+    id: v.id,
+    lineageId: v.lineage_id,
+    version: v.version,
+    kind: v.kind,
+    subject: v.subject as string | null,
+    content: v.content,
+    scope: v.scope,
+    status: v.status,
+    verification: v.verification,
+    supersedesId: v.supersedes_id as string | null,
+    supersededBy: v.superseded_by as string | null,
+    conflictsWith: v.conflicts_with as string | null,
+    observedAt: v.observed_at,
+    recordedAt: v.recorded_at,
+    expiresAt: v.expires_at as string | null,
+    statusReason: v.status_reason as string | null,
+    expired: v.expired,
+    current: v.current,
+    source,
+    usedCount: (v.used_count as number | null) ?? 0,
+  };
+}
+
+export function parseMemorySettings(value: unknown): MemorySettings | null {
+  if (!isRecord(value) || typeof value.capture_enabled !== 'boolean' || !isNullableString(value.project)) return null;
+  return { captureEnabled: value.capture_enabled, project: value.project };
+}
+
+export function parseMemoryList(value: unknown): MemoryList | null {
+  if (!isRecord(value)) return null;
+  const memories = parseAll(value.memories, parseMemoryRecord);
+  const settings = parseMemorySettings(value.settings);
+  return memories && settings ? { memories, settings } : null;
+}
+
+/** Validate renderer-supplied memory arguments. Status, verification, source and scope names are never accepted. */
+export function parseMemoryQueryArgs(value: unknown): MemoryQueryArgs | null {
+  if (!isRecord(value) || !hasExactKeys(value, 'includeHistory,query')) return null;
+  const { query, includeHistory } = value;
+  if (!isString(query) || query.length > MAX_MEMORY_QUERY || typeof includeHistory !== 'boolean') return null;
+  return { query, includeHistory };
+}
+
+function isMemoryText(v: unknown): v is string {
+  return isString(v) && v.trim().length > 0 && v.length <= MAX_MEMORY_CHARS && !v.includes('\u0000');
+}
+
+export function parseAddMemoryArgs(value: unknown): AddMemoryArgs | null {
+  if (!isRecord(value) || !hasExactKeys(value, 'content,expiresOn,kind,scope,subject')) return null;
+  const { content, kind, subject, scope, expiresOn } = value;
+  if (!isMemoryText(content) || (kind !== 'fact' && kind !== 'preference')) return null;
+  if (!(subject === null || (isString(subject) && subject.length <= 60))) return null;
+  if (scope !== 'global' && scope !== 'project') return null;
+  if (!(expiresOn === null || (isString(expiresOn) && /^\d{4}-\d{2}-\d{2}$/.test(expiresOn)))) return null;
+  return { content, kind, subject, scope, expiresOn };
+}
+
+export function parseCorrectMemoryArgs(value: unknown): CorrectMemoryArgs | null {
+  if (!isRecord(value) || !hasExactKeys(value, 'content,id')) return null;
+  return isUuid(value.id) && isMemoryText(value.content) ? { id: value.id, content: value.content } : null;
+}
+
+export function parseMemoryDecisionArgs(value: unknown): MemoryDecisionArgs | null {
+  if (!isRecord(value) || !hasExactKeys(value, 'action,id') || !isUuid(value.id)) return null;
+  const { action } = value;
+  return action === 'confirm' || action === 'reject' || action === 'delete' ? { id: value.id, action } : null;
+}
+
+export function parseMemorySettingsArgs(value: unknown): MemorySettings | null {
+  if (!isRecord(value) || !hasExactKeys(value, 'captureEnabled,project')) return null;
+  const { captureEnabled, project } = value;
+  if (typeof captureEnabled !== 'boolean') return null;
+  if (!(project === null || (isString(project) && PROJECT_PATTERN.test(project)))) return null;
+  return { captureEnabled, project };
 }

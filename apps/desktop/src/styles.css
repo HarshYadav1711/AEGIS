@@ -792,3 +792,110 @@ select {
 
 .task[data-status='awaiting_save'] { border-color: var(--state-starting); }
 .task__status[data-status='awaiting_save'] { color: var(--state-starting); }
+
+/* Memory (workstream M0): provisional, uses the same tokens as every other panel */
+.memory[open] {
+  flex-basis: 100%;
+}
+
+.memory input:not([type='checkbox']),
+.memory textarea {
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.memory textarea {
+  width: 100%;
+  resize: vertical;
+}
+
+.memory__settings,
+.memory__add {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.memory__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.memory__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: var(--space-2) 0;
+  padding: 0;
+  list-style: none;
+}
+
+.memory__item {
+  padding: var(--space-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius);
+}
+
+.memory__item[data-status='superseded'],
+.memory__item[data-status='rejected'],
+.memory__item[data-status='expired'] {
+  opacity: 0.7;
+  border-style: dashed;
+}
+
+.memory__content {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.memory__meta {
+  margin: var(--space-1) 0 0;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.memory__status {
+  display: inline-block;
+  font-weight: 600;
+}
+
+.memory__status::first-letter {
+  text-transform: uppercase;
+}
+
+.memory__item[data-status='active'] .memory__status { color: var(--state-online); }
+.memory__item[data-status='disputed'] .memory__status,
+.memory__item[data-status='candidate'] .memory__status { color: var(--state-starting); }
+
+.memory__warn {
+  margin: var(--space-1) 0 0;
+  font-size: 0.75rem;
+  color: var(--state-starting);
+}
+
+.memory__error {
+  margin: var(--space-2) 0;
+  color: var(--state-problem);
+}
+
+.memory__actions,
+.memory__edit {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.button--danger {
+  border-color: var(--state-problem);
+  color: var(--state-problem);
+}

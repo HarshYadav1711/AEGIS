@@ -22,6 +22,7 @@
 | D17 | No arbitrary framework/service swaps | Stable understandable architecture | LOCKED |
 | D18 | Demo and benchmarks must show real outcomes with provenance | TaskWitness/Pactrieve/RouteTune/AHI lessons | LOCKED |
 | D19 | Name AEGIS is provisional pending availability review | No trademark clearance | OPEN branding |
+| D21 | Adaptive memory (M0): models only propose candidates; deterministic store sets status, scope, verification, versions and provenance; FTS5 only, no embeddings/graph DB until measured need; retrieved memory is quoted reference data and never grants tools or permissions | Memory must not become a new authority or injection path | LOCKED for M0 (user-authorized 2026-10-22) |
 | D20 | Long-term Android/IoT, Skill Forge, smart-home, AHI/RouteTune integration deferred | Must build useful core before expansions | BACKLOG |
 
 ## Required architecture amendment process

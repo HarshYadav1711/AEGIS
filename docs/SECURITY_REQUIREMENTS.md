@@ -21,6 +21,12 @@
 - Untrusted web/document text cannot modify permissions, override the agent prompt hierarchy or instruct executor to bypass checks.
 - Read-only repository walk excludes `.git`, `node_modules`, venv, binary blobs, secret files, oversized files and sensitive patterns. Never call shell for repo inspection.
 
+## Workstream M0 — memory
+- Capture only explicit `Remember …` messages, completed task outcomes and (as review-only candidates) model extraction of standing instructions; no screen, clipboard, keystroke, background-app or filesystem capture. A user toggle disables automatic capture.
+- Model output can never make a memory current; status, scope, verification and provenance are set by deterministic code and database constraints.
+- Refuse obvious secrets (keys, tokens, passwords, private keys); event log stores ids, not content. Delete removes every version.
+- Retrieved notes are bounded, source-labelled, quoted data and never change tool access, approvals or policy. Memory stays local; it reaches only the user-selected local model.
+
 ## Phases 5–7
 - Mic capture explicit and visible, no background recording by default; voice not high-risk approval.
 - Agent delegation does not transfer wider authority. Check actual tool effect and audit history.

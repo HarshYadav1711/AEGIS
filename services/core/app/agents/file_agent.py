@@ -22,6 +22,7 @@ from typing import Any, TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from app.agents.intent import Interpretation, interpret
+from app.memory import adaptive as memory
 from app.models.base import ModelAdapter
 from app.tasks import file_journal as journal
 from app.tools.file_organizer import PlannedOperation, build_plan, execute_move, reconcile_move
@@ -162,6 +163,8 @@ class FileTaskManager:
             ops = journal.operations(db, plan_id)
             status = journal.outcome_status(ops, cancelled)
             journal.finish_task(db, task_id, status, _summary(ops), error)
+            if status == "completed":
+                _remember_outcome(db, task_id, ops)
             return {}
 
         graph = StateGraph(ExecState)
@@ -247,6 +250,20 @@ class FileTaskManager:
             event.set()
         if self._running:
             await asyncio.wait(set(self._running.values()), timeout=SHUTDOWN_WAIT_S)
+
+
+def _remember_outcome(db: Path, task_id: str, ops: list[journal.FileOperation]) -> None:
+    """Record the verified result as a task experience. Written by code from the journal, never by the model."""
+    task = journal.get_task(db, task_id)
+    moved = sum(o.status == "verified" for o in ops)
+    try:
+        memory.record_task_outcome(
+            db, source_type="file_task", task_id=task_id, observed_at=task.finished_at or journal.now(),
+            content=f"File task completed: organized the files in {task.root_path} by type; "
+                    f"{moved} file(s) moved and verified on disk.",
+        )
+    except Exception:  # the task result is already recorded; a memory failure must not change it
+        log.exception("could not record memory for file task %s", task_id)
 
 
 def _summary(ops: list[journal.FileOperation]) -> str:

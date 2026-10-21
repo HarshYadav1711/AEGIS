@@ -244,6 +244,110 @@ MIGRATIONS: tuple[Migration, ...] = (
             "CREATE INDEX research_events_task ON research_events(task_id, id)",
         ),
     ),
+    Migration(
+        version=5,
+        name="adaptive_memory",
+        statements=(
+            # Internal events memory was derived from or changed by. References only, never message or file content.
+            """
+            CREATE TABLE memory_events (
+                id              TEXT PRIMARY KEY,
+                kind            TEXT NOT NULL CHECK (kind IN (
+                                    'remember', 'extracted', 'task_outcome', 'added', 'corrected', 'confirmed',
+                                    'rejected', 'deleted', 'refused', 'settings')),
+                source_type     TEXT NOT NULL CHECK (source_type IN (
+                                    'user_message', 'memory_ui', 'file_task', 'research_task')),
+                source_id       TEXT,
+                conversation_id TEXT,
+                detail          TEXT NOT NULL,
+                at              TEXT NOT NULL
+            )
+            """,
+            # A message or task is captured at most once, whatever retries happen.
+            """
+            CREATE UNIQUE INDEX memory_events_capture_once ON memory_events(kind, source_type, source_id)
+            WHERE source_id IS NOT NULL AND kind IN ('remember', 'extracted', 'task_outcome')
+            """,
+            # One row per version. Content is immutable: a correction inserts a new version of the same lineage
+            # and marks the old one superseded, so history is never overwritten.
+            """
+            CREATE TABLE memory_facts (
+                id              TEXT PRIMARY KEY,
+                lineage_id      TEXT NOT NULL,
+                version         INTEGER NOT NULL CHECK (version >= 1),
+                kind            TEXT NOT NULL CHECK (kind IN ('fact', 'preference', 'inference', 'experience')),
+                subject         TEXT,
+                content         TEXT NOT NULL CHECK (length(content) BETWEEN 1 AND 500),
+                normalized      TEXT NOT NULL,
+                scope           TEXT NOT NULL CHECK (scope = 'global' OR scope LIKE 'project:_%'),
+                status          TEXT NOT NULL CHECK (status IN (
+                                    'candidate', 'active', 'disputed', 'superseded', 'rejected')),
+                verification    TEXT NOT NULL CHECK (verification IN (
+                                    'user_stated', 'user_confirmed', 'tool_verified', 'model_proposed')),
+                source_event_id TEXT NOT NULL REFERENCES memory_events(id),
+                supersedes_id   TEXT REFERENCES memory_facts(id),
+                -- No FK: the replacement may later be deleted; the dangling id still records what happened.
+                superseded_by   TEXT,
+                conflicts_with  TEXT REFERENCES memory_facts(id) ON DELETE SET NULL,
+                observed_at     TEXT NOT NULL,
+                recorded_at     TEXT NOT NULL,
+                expires_at      TEXT,
+                status_at       TEXT NOT NULL,
+                status_reason   TEXT,
+                UNIQUE (lineage_id, version),
+                CHECK (status != 'superseded' OR superseded_by IS NOT NULL),
+                -- A model proposal is never current truth until the user confirms or restates it.
+                CHECK (verification != 'model_proposed' OR status != 'active'),
+                CHECK ((kind = 'experience') = (verification = 'tool_verified'))
+            )
+            """,
+            # Deduplication and one live version per lineage, enforced by the database.
+            """
+            CREATE UNIQUE INDEX memory_facts_live_unique ON memory_facts(scope, normalized)
+            WHERE status IN ('candidate', 'active', 'disputed')
+            """,
+            """
+            CREATE UNIQUE INDEX memory_facts_lineage_live ON memory_facts(lineage_id)
+            WHERE status IN ('candidate', 'active', 'disputed')
+            """,
+            "CREATE INDEX memory_facts_recorded ON memory_facts(recorded_at DESC)",
+            """
+            CREATE TRIGGER memory_facts_immutable
+            BEFORE UPDATE OF lineage_id, version, kind, subject, content, normalized, scope, source_event_id,
+                             supersedes_id, observed_at, recorded_at
+            ON memory_facts
+            BEGIN
+                SELECT RAISE(ABORT, 'memory fact versions are immutable');
+            END
+            """,
+            """
+            CREATE VIRTUAL TABLE memory_fts USING fts5(
+                content, subject, content='memory_facts', content_rowid='rowid', tokenize='unicode61 remove_diacritics 2'
+            )
+            """,
+            """
+            CREATE TRIGGER memory_facts_fts_insert AFTER INSERT ON memory_facts BEGIN
+                INSERT INTO memory_fts(rowid, content, subject) VALUES (new.rowid, new.content, coalesce(new.subject, ''));
+            END
+            """,
+            """
+            CREATE TRIGGER memory_facts_fts_delete AFTER DELETE ON memory_facts BEGIN
+                INSERT INTO memory_fts(memory_fts, rowid, content, subject)
+                VALUES ('delete', old.rowid, old.content, coalesce(old.subject, ''));
+            END
+            """,
+            # Which memory versions were put into which reply's context (audit, never model-claimed).
+            """
+            CREATE TABLE memory_retrievals (
+                message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+                fact_id    TEXT NOT NULL REFERENCES memory_facts(id) ON DELETE CASCADE,
+                rank       INTEGER NOT NULL,
+                PRIMARY KEY (message_id, fact_id)
+            )
+            """,
+            "CREATE INDEX memory_retrievals_fact ON memory_retrievals(fact_id)",
+        ),
+    ),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

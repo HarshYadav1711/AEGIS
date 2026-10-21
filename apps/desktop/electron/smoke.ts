@@ -22,6 +22,10 @@ import type { BackendManager } from './backend';
  * With AEGIS_SMOKE_RESEARCH_MODEL=<model> and AEGIS_SMOKE_RESEARCH_DIR=<existing folder> it runs a
  * REAL public-web research task through the UI (see runResearchScenario); only the native folder
  * dialog is answered by this harness, with that folder.
+ * With AEGIS_SMOKE_MEMORY_MODEL=<model> it runs the REAL memory scenario through the UI (see
+ * runMemoryScenario): remember in chat -> restart -> recall -> correct in the Memory panel -> recall.
+ * AEGIS_SMOKE_MEMORY_PHASE=remember|recall splits it across two app launches that share
+ * AEGIS_SMOKE_USER_DATA, so the restart in between is a full application restart.
  * Prints one `AEGIS_SMOKE_RESULT <json>` line and returns the exit code.
  */
 export async function runSmokeTest(window: BrowserWindow, backend: BackendManager): Promise<number> {
@@ -81,13 +85,16 @@ export async function runSmokeTest(window: BrowserWindow, backend: BackendManage
     record('renderer has no require()', probe.require === 'undefined', probe.require);
     record('renderer has no process', probe.process === 'undefined', probe.process);
     const expectedKeys = [
+      'addMemory',
       'approveFilePlan',
       'approveResearchPlan',
       'cancelFileTask',
       'cancelGeneration',
       'cancelResearchTask',
       'chooseFolderForTask',
+      'correctMemory',
       'createConversation',
+      'decideMemory',
       'getAppInfo',
       'getBackendStatus',
       'getConversation',
@@ -97,6 +104,7 @@ export async function runSmokeTest(window: BrowserWindow, backend: BackendManage
       'interpretResearchRequest',
       'listConversations',
       'listFileTasks',
+      'listMemories',
       'listResearchTasks',
       'onBackendStatus',
       'onChatEvent',
@@ -108,6 +116,7 @@ export async function runSmokeTest(window: BrowserWindow, backend: BackendManage
       'restartBackend',
       'saveResearchReport',
       'sendMessage',
+      'setMemorySettings',
     ];
     record('bridge exposes only the typed API', JSON.stringify(probe.bridgeKeys) === JSON.stringify(expectedKeys), probe.bridgeKeys.join(','));
 
@@ -234,6 +243,40 @@ export async function runSmokeTest(window: BrowserWindow, backend: BackendManage
       researchUnknown.join(','),
     );
 
+    // Memory IPC accepts text and ids only: no status, verification, provenance or raw scope.
+    const memoryRejected = await evaluate<string[]>(`(async () => {
+      const out = [];
+      const id = crypto.randomUUID();
+      const attempts = [
+        () => window.aegis.addMemory({ content: 'x', kind: 'fact', subject: null, scope: 'global', expiresOn: null, status: 'active' }),
+        () => window.aegis.addMemory({ content: 'x', kind: 'experience', subject: null, scope: 'global', expiresOn: null }),
+        () => window.aegis.addMemory({ content: 'x', kind: 'fact', subject: null, scope: 'project:other', expiresOn: null }),
+        () => window.aegis.correctMemory({ id: '../1', content: 'x' }),
+        () => window.aegis.decideMemory({ id, action: 'activate' }),
+        () => window.aegis.setMemorySettings({ captureEnabled: 'yes', project: null }),
+        () => window.aegis.listMemories({ query: 'x', includeHistory: false, sql: '1=1' }),
+      ];
+      for (const attempt of attempts) {
+        try { await attempt(); out.push('accepted'); } catch { out.push('rejected'); }
+      }
+      return out;
+    })()`);
+    record(
+      'malformed memory IPC arguments (status, kind, raw scope, ids) are rejected',
+      memoryRejected.every((r) => r === 'rejected'),
+      memoryRejected.join(','),
+    );
+    const memorySecret = await evaluate<{ ok: boolean; code?: string }>(`(async () => {
+      const r = await window.aegis.addMemory({ content: 'my password is hunter2', kind: 'fact', subject: null,
+                                               scope: 'global', expiresOn: null });
+      return r.ok ? { ok: true } : { ok: false, code: r.error.code };
+    })()`);
+    record(
+      'a secret typed as a memory is refused by the core',
+      !memorySecret.ok && memorySecret.code === 'secret_detected',
+      JSON.stringify(memorySecret),
+    );
+
     const port = backend.port;
     if (port !== null) {
       const noAuth = await fetch(`http://127.0.0.1:${port}/health`).then((r) => r.status, () => -1);
@@ -294,6 +337,13 @@ export async function runSmokeTest(window: BrowserWindow, backend: BackendManage
       await runChatScenario({ evaluate, record, screenshot, waitForOrb, backend, model: chatModel });
     } else {
       console.log('[smoke] real-model chat scenario NOT CONFIGURED (set AEGIS_SMOKE_CHAT_MODEL)');
+    }
+    const memoryModel = process.env.AEGIS_SMOKE_MEMORY_MODEL?.trim();
+    if (memoryModel) {
+      const phase = process.env.AEGIS_SMOKE_MEMORY_PHASE?.trim() || 'all';
+      await runMemoryScenario({ evaluate, record, screenshot, waitForOrb, backend, model: memoryModel }, phase, readyState);
+    } else {
+      console.log('[smoke] real memory scenario NOT CONFIGURED (set AEGIS_SMOKE_MEMORY_MODEL)');
     }
     const researchModel = process.env.AEGIS_SMOKE_RESEARCH_MODEL?.trim();
     const researchDir = process.env.AEGIS_SMOKE_RESEARCH_DIR?.trim();
@@ -588,6 +638,122 @@ async function runResearchScenario(ctx: ChatScenarioContext, saveDir: string): P
   );
   await screenshot('12-research-refused');
   await click('Close');
+}
+
+/**
+ * REAL memory round trip through the actual UI and a real model. Only the stored memory and the
+ * model's real reply are checked; nothing is injected. Phases: 'all' (core process restart in the
+ * middle), or 'remember' / 'recall' in two launches sharing AEGIS_SMOKE_USER_DATA (full app restart).
+ */
+async function runMemoryScenario(ctx: ChatScenarioContext, phase: string, readyState: string): Promise<void> {
+  const { evaluate, record, screenshot, waitForOrb, backend, model } = ctx;
+  const QUESTION = 'What is my test folder name? Answer with the name only.';
+  const installed = backend.status.health?.provider?.models ?? [];
+  record(`memory model ${model} is installed`, installed.includes(model), installed.join(','));
+  if (!installed.includes(model)) return;
+
+  const waitFor = async (predicate: () => Promise<boolean>, timeoutMs: number) => {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (await predicate()) return true;
+      await delay(200);
+    }
+    return false;
+  };
+  const setValue = (selector: string, value: string) =>
+    evaluate(`(() => {
+      const el = document.querySelector(${JSON.stringify(selector)});
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(el, ${JSON.stringify(value)});
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`);
+  const ask = async (text: string): Promise<{ ok: boolean; reply: string; seconds: string }> => {
+    await waitForOrb(readyState, 10_000);
+    await evaluate(`document.querySelector('.conversations__new').click()`);
+    await delay(200);
+    await evaluate(`(() => {
+      const select = document.querySelector('#model-select');
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(select, ${JSON.stringify(model)});
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    })()`);
+    await setValue('#composer-input', text);
+    await delay(150);
+    const started = Date.now();
+    await evaluate(`document.querySelector('.composer button[type="submit"]').click()`);
+    const ok = await waitForOrb('succeeded', 240_000);
+    const reply = await evaluate<string>(`(() => {
+      const items = [...document.querySelectorAll('.message[data-role="assistant"]')];
+      return items[items.length - 1]?.querySelector('.message__text')?.textContent ?? '';
+    })()`);
+    return { ok, reply, seconds: ((Date.now() - started) / 1000).toFixed(1) };
+  };
+  const items = () =>
+    evaluate<{ id: string; status: string; text: string; meta: string }[]>(`[...document.querySelectorAll('.memory__item')]
+      .map((li) => ({ id: li.dataset.memoryId, status: li.dataset.status,
+                      text: li.querySelector('.memory__content')?.textContent ?? '',
+                      meta: [...li.querySelectorAll('.memory__meta')].map((m) => m.textContent).join(' | ') }))`);
+  const openPanel = () =>
+    evaluate(`(() => { const d = document.querySelector('details.memory'); if (!d.open) d.open = true; })()`);
+
+  if (phase === 'all' || phase === 'remember') {
+    const remembered = await ask('Remember: my test folder name is Zephyr-42');
+    record('chat "Remember: ..." turn completes with the real model', remembered.ok,
+      `${remembered.seconds}s ${remembered.reply.slice(0, 160)}`);
+    await openPanel();
+    const stored = await waitFor(
+      async () => (await items()).some((m) => m.status === 'active' && m.text.includes('Zephyr-42')), 10_000);
+    const item = (await items()).find((m) => m.text.includes('Zephyr-42'));
+    record(
+      'Memory panel shows it as an active statement from the chat message',
+      stored && !!item && /stated by you/.test(item.meta) && /from chat message/.test(item.meta),
+      JSON.stringify(item ?? null),
+    );
+    await screenshot('13-memory-remembered');
+  }
+  if (phase === 'all') {
+    backend.killProcessForTest();
+    record('core stopped for the restart', await waitForOrb('offline', 10_000));
+    await backend.restart();
+    record('core restarted', await waitForOrb(readyState, 30_000));
+  }
+  if (phase === 'all' || phase === 'recall') {
+    const recalled = await ask(QUESTION);
+    record('after restart the real model recalls the stored memory', recalled.ok && /zephyr-42/i.test(recalled.reply),
+      `${recalled.seconds}s ${recalled.reply.slice(0, 160)}`);
+
+    await openPanel();
+    await waitFor(async () => (await items()).some((m) => m.text.includes('Zephyr-42')), 10_000);
+    const target = (await items()).find((m) => m.status === 'active' && m.text.includes('Zephyr-42'));
+    record('the remembered memory is still listed after the restart', !!target, JSON.stringify(target ?? null));
+    if (!target) return;
+    const li = `.memory__item[data-memory-id="${target.id}"]`;
+    const clickIn = (label: string) =>
+      evaluate(`[...document.querySelectorAll('${li} button')].find((b) => b.textContent === ${JSON.stringify(label)}).click()`);
+    await clickIn('Correct');
+    await delay(200);
+    await setValue(`#correct-${target.id}`, 'My test folder name is Orion-7');
+    await delay(150);
+    await clickIn('Save correction');
+    const corrected = await waitFor(
+      async () => (await items()).some((m) => m.status === 'active' && m.text.includes('Orion-7')), 10_000);
+    await evaluate(`[...document.querySelectorAll('details.memory label')]
+      .find((l) => l.textContent.includes('Show history')).querySelector('input').click()`);
+    await waitFor(async () => (await items()).some((m) => m.id === target.id), 5_000);
+    const old = (await items()).find((m) => m.id === target.id);
+    record(
+      'correction in the panel creates a new version; the old one is shown as superseded',
+      corrected && old?.status === 'superseded' && /superseded by a newer version/.test(old.meta),
+      JSON.stringify(old ?? null),
+    );
+    await screenshot('14-memory-corrected');
+
+    const after = await ask(QUESTION);
+    record(
+      'after the correction the real model answers with the corrected value only',
+      after.ok && /orion-7/i.test(after.reply) && !/zephyr/i.test(after.reply),
+      `${after.seconds}s ${after.reply.slice(0, 160)}`,
+    );
+    await screenshot('15-memory-recalled-corrected');
+  }
 }
 
 /** Average CPU% per Electron process type over a window, from Electron's own metrics. */

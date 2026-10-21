@@ -17,6 +17,10 @@ import type {
   FileTaskProgressEvent,
   FileTaskRecord,
   IpcChannel,
+  MemoryAddOutcome,
+  MemoryList,
+  MemoryRecord,
+  MemorySettings,
   ResearchInterpretation,
   ResearchTaskDetail,
   ResearchTaskSummary,
@@ -50,6 +54,11 @@ const channels = {
   researchCancel: 'aegis:research:cancel',
   researchSave: 'aegis:research:save',
   researchOpenReport: 'aegis:research:open-report',
+  memoryList: 'aegis:memory:list',
+  memoryAdd: 'aegis:memory:add',
+  memoryCorrect: 'aegis:memory:correct',
+  memoryDecide: 'aegis:memory:decide',
+  memorySetSettings: 'aegis:memory:set-settings',
 } as const satisfies Record<string, IpcChannel>;
 
 /** Subscribe without ever handing the renderer the IpcRendererEvent (which exposes `sender`). */
@@ -99,6 +108,15 @@ const bridge: AegisBridge = {
   saveResearchReport: (taskId) =>
     ipcRenderer.invoke(channels.researchSave, taskId) as Promise<ChatResult<ResearchTaskDetail | null>>,
   openResearchReport: (taskId) => ipcRenderer.invoke(channels.researchOpenReport, taskId) as Promise<ChatResult<true>>,
+  listMemories: (args) => ipcRenderer.invoke(channels.memoryList, args) as Promise<ChatResult<MemoryList>>,
+  addMemory: (args) =>
+    ipcRenderer.invoke(channels.memoryAdd, args) as Promise<
+      ChatResult<{ memory: MemoryRecord; outcome: MemoryAddOutcome }>
+    >,
+  correctMemory: (args) => ipcRenderer.invoke(channels.memoryCorrect, args) as Promise<ChatResult<MemoryRecord>>,
+  decideMemory: (args) => ipcRenderer.invoke(channels.memoryDecide, args) as Promise<ChatResult<true>>,
+  setMemorySettings: (settings) =>
+    ipcRenderer.invoke(channels.memorySetSettings, settings) as Promise<ChatResult<MemorySettings>>,
 };
 
 contextBridge.exposeInMainWorld('aegis', Object.freeze(bridge));

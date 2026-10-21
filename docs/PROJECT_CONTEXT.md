@@ -1,5 +1,5 @@
 # PROJECT_CONTEXT.md — Current AEGIS Context Lock
-**Updated:** 2026-10-22 (user-approved status update after Phase 3). **Status:** Phases 0–2 committed; Phase 3 implemented and verified on this machine, **not yet committed** (awaiting user review).
+**Updated:** 2026-10-22 (user-approved status update after Phase 3). **Status:** Phases 0–3 committed (HEAD `2440179`); memory workstream M0 implemented and verified on this machine, **not yet committed** (awaiting user review).
 
 ## Goal
 Build AEGIS, a genuine Windows-first assistant with original reactive orb, actual model calls, safe file/browser/repo automation, clear approvals, durable state, evidence and measurable evaluation. Reference aesthetic: JARVIS holography + ULTRON energy reactivity + FRIDAY voice minimalism. No copying assets/code. Financial goal: $0 mandatory spend.
@@ -18,7 +18,8 @@ Observed on the user's Windows 11 machine (Node 24.19.0, Python 3.12.0, Ollama 0
 | 0 — Bootable shell | Committed `9b8d75a` | Electron smoke checks pass (isolation, IPC rejection, token auth, offline/reconnect, reduced motion) |
 | 1 — Real AI conversation | Committed `983d617` | Ollama chat + SQLite persistence; real-model smoke runs only when `AEGIS_SMOKE_CHAT_MODEL` is set |
 | 2 — File agent | Committed `825baa7` | LangGraph plan → approve → move → verify; journal and recovery tests |
-| 3 — Browser research | Implemented on top of `825baa7`, **uncommitted** | See below |
+| 3 — Browser research | Committed `2440179` | See below |
+| M0 — Adaptive memory | Implemented on top of `2440179`, **uncommitted** | See below |
 
 Phase 3 verification (2026-10-22):
 - Baseline before edits: pytest 119 passed / 6 skipped; 22 TS tests; Electron smoke all PASS.
@@ -26,6 +27,13 @@ Phase 3 verification (2026-10-22):
 - Live public web (`AEGIS_LIVE_WEB=1`): docs.python.org fetched and extracted; localhost, 127.0.0.1, 192.168.1.1 and http:// refused. Live model (`qwen3:4b`): report generated, 5 findings supported by verbatim quotes, saved and hash-verified.
 - GUI run of the real app (smoke harness, only the native folder dialog answered by the harness): plan shown before any read, local URL refused, pages read, report generated in ~46 s, saved to the chosen folder without overwrite, opened via the OS, private-only request refused without a task.
 - Known issues: one intermittent `test_provider_failures` failure in ~8 full runs (not reproduced; suspected render timeout under load); quote/keyword checks can mark a misparaphrased claim as supported (observed once); Wikipedia blocks the client (HTTP 403, reported as blocked); only direct URLs, no web search; JavaScript-only pages and PDFs are not read.
+
+M0 verification (2026-10-22):
+- Baseline before edits: pytest 194 passed / 9 skipped; 27 TS tests; Electron smoke PASS.
+- After: pytest 223 passed / 11 skipped (2 new opt-in live tests); 30 TS tests; typecheck, lint and Electron smoke PASS (incl. memory IPC rejection and secret refusal in the running app).
+- Live `qwen3:4b`: extraction returned schema-valid candidates (~5 s); remember → core restart → recall `Zephyr-42` → correction → recall `Orion-7` only.
+- Windows GUI (smoke harness, real model, real UI clicks): same scenario with a core process restart, and again split across two full app launches sharing one profile; all checks PASS.
+- Known limits: lexical FTS5 retrieval (no synonyms); conflict detection only by identical subject label; `Remember …` messages are stored verbatim (kind/subject by regex); deleting a memory does not delete the chat message it came from; single user, project scope is a manual label.
 
 Design (fonts, palette, layout) remains open per D09. Phase 4 has not started.
 

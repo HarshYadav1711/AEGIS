@@ -108,6 +108,39 @@ $env:AEGIS_LIVE_WEB = '1'; $env:AEGIS_LIVE_MODEL = 'qwen3:4b'
 services\core\.venv\Scripts\python -m pytest services\core	ests	est_research_live.py -s
 ```
 
+## Memory (workstream M0)
+
+Local only, in the same SQLite database (schema v5: `memory_events`, `memory_facts`, `memory_fts`,
+`memory_retrievals`). Open **Memory** in the bottom drawer to search, add, correct, confirm, reject or delete.
+
+- **What is captured:** a chat message that starts with `Remember …` (stored verbatim as your statement);
+  a completed file task or saved research report (stored by code as a verified task outcome); and, for
+  messages that look like standing instructions ("From now on…", "I prefer…", "Call me…"), up to three
+  model-proposed **candidates** that are never used until you confirm them. The checkbox in the panel
+  turns automatic capture off. Nothing else is captured (no screen, clipboard, keystrokes or files).
+- **What a reply sees:** up to 3 of your stated/confirmed preferences plus up to 6 FTS5 matches, all
+  `active` and unexpired, in the global scope or the current project. They go in as one labelled,
+  quoted system note; your message is passed on unchanged. Which versions were used is recorded per reply.
+- **Corrections** add a new version; the old one stays visible under *Show history* as superseded.
+  Two statements with the same subject are both marked **disputed** (not used) until you confirm one.
+- **Secrets** (keys, tokens, passwords, private keys) are refused. **Delete** removes every version.
+
+Live checks (skipped unless enabled):
+
+```powershell
+$env:AEGIS_LIVE_MODEL = 'qwen3:4b'
+services\core\.venv\Scripts\python -m pytest services\core\tests\test_memory_live.py -s
+```
+
+GUI round trip (remember → restart → recall → correct → recall) in the real app:
+
+```powershell
+$env:AEGIS_SMOKE_MEMORY_MODEL = 'qwen3:4b'; npm --prefix apps\desktop run smoke
+```
+
+Set `AEGIS_SMOKE_MEMORY_PHASE` to `remember`, then `recall`, with the same `AEGIS_SMOKE_USER_DATA`
+folder for both runs to make the restart a full application restart.
+
 ## Troubleshooting
 
 - **"The isolated browser could not start"** on a research task: run `scripts\setup.ps1` again
