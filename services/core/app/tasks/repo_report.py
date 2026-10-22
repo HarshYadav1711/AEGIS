@@ -3,13 +3,23 @@
 The model proposes components, findings and hypotheses. This module decides,
 deterministically, what each is worth; a model opinion is never verification:
 
-  confirmed              produced by AEGIS's own deterministic checks (repo_scan), never by the model
+  confirmed              (report key; shown as "Pattern detected") a match of AEGIS's own deterministic checks
+                         (repo_scan), never the model: the pattern occurs at that line, which is not a confirmed
+                         or exploited vulnerability
   likely_issue           model 'issue' whose cited lines exist in the excerpt it was shown and whose quote
                          occurs verbatim in those lines of the real file
   plausible_concern      model 'concern' with the same evidence check passed
   best_practice          model 'practice' with the same evidence check passed
-  insufficient_evidence  cited file exists but the lines/quote do not check out
+  insufficient_evidence  cited file exists but the lines/quote do not check out, the cited lines share nothing
+                         with the claim, or the claim names a different file than the one cited
   removed                cites a file id that was never shown to the model (not reported as a finding)
+
+A matching quote proves only that the quote occurs at that location, not that the claim is right. Each checked
+model finding therefore also gets a `support` level from a lexical test (not a semantic entailment model):
+
+  supported      the quote contains what the claim's title names, and the claim is not worded more broadly
+                 (scope, exploitability) than one location can show; still a model statement, not proof
+  needs_review   location and quote are real, but code could not tie them to the claim; a human must judge
 
 Hypotheses stay hypotheses: they are shown with their supporting and
 contradicting points and verification steps, labelled unverified.
@@ -32,12 +42,30 @@ _LINE_PREFIX = re.compile(r"(^|\n)\s*L\d+:\s?")
 
 CATEGORY_STATUS = {"issue": "likely_issue", "concern": "plausible_concern", "practice": "best_practice"}
 LABELS = {
-    "confirmed": "Confirmed (deterministic check)",
-    "likely_issue": "Likely issue (model, evidence checked)",
-    "plausible_concern": "Plausible concern (model, evidence checked)",
-    "best_practice": "General best practice",
+    "confirmed": "Pattern detected (deterministic check; not a confirmed vulnerability)",
+    "likely_issue": "Likely issue (model; cited location and quote checked)",
+    "plausible_concern": "Plausible concern (model; cited location and quote checked)",
+    "best_practice": "General best practice (model; cited location and quote checked)",
     "insufficient_evidence": "Insufficient evidence",
+    "supported": "Quote supports the narrow observation (lexical check, not proof)",
+    "needs_review": "Requires review: the quote is real, but it was not established that it supports the claim",
 }
+# Claim words that code usually spells differently. Deliberately small: a lexical aid, not a semantic model.
+_ALIASES = {
+    "sql": {"select", "insert", "update", "delete", "execute", "executemany", "cursor", "sqlite3", "query"},
+    "error": {"except", "catch", "raise", "throw"}, "errors": {"except", "catch", "raise", "throw"},
+    "exception": {"except", "catch"}, "exceptions": {"except", "catch"},
+    "credential": {"password", "secret", "token", "key"}, "credentials": {"password", "secret", "token", "key"},
+    "shell": {"subprocess", "popen", "system"},
+    "input": {"request", "args", "params", "argv", "body"},
+}
+# Wording that claims more than one quoted location can show (scope), or impact nobody observed.
+_BROAD = re.compile(r"\b(all|every\w*|entire|whole|throughout|everywhere|anywhere|always|never|across|codebase|"
+                    r"project-wide|repository-wide|systemic\w*|consistently)\b", re.IGNORECASE)
+_IMPACT = re.compile(r"\b(exploit\w*|attackers?|arbitrary|remote code|compromis\w*|takeover|breach\w*|"
+                     r"(?:is|are) vulnerable|confirmed)\b", re.IGNORECASE)
+_FILE_NAME = re.compile(r"(?<![\w/.-])((?:[\w.-]+/)*[\w-]+\.(?:py|pyi|js|jsx|mjs|cjs|ts|tsx|json|toml|ya?ml|cfg|"
+                        r"ini|md|rs|go|java|rb|php|cs|cpp|hpp|vue|svelte|sh|ps1))\b")
 
 
 class _Component(BaseModel):
@@ -120,12 +148,52 @@ def _norm(text: str) -> str:
     return re.sub(r"\s+", " ", _LINE_PREFIX.sub(" ", text)).strip().casefold().strip(" .,;:\"'`")
 
 
+def _terms(text: str) -> set[str]:
+    return set(content_words(text.replace("_", " ")))
+
+
+def _matches(word: str, terms: set[str]) -> bool:
+    """Same word, a shared stem of 4+ letters (evaluated/eval, errors/error) or a listed alias."""
+    if word in terms or terms & _ALIASES.get(word, set()):
+        return True
+    return any(min(len(word), len(t)) >= 4 and (word.startswith(t) or t.startswith(word)) for t in terms)
+
+
+def _support(f: _Finding, path: str, window: str, quote: str, excerpt: str) -> tuple[str | None, list[str]]:
+    """How far a quote that occurs at the cited lines backs the claim: None (insufficient), 'needs_review' or
+    'supported', with the reasons. Lexical only: it can reject clearly unrelated evidence, not prove a claim."""
+    claim = f"{f.title} {f.detail}"
+    named = {m.casefold() for m in _FILE_NAME.findall(claim)}
+    cited = path.casefold()
+    if named and not any(cited == n or cited.endswith("/" + n.rsplit("/", 1)[-1]) for n in named):
+        return None, [f"The claim refers to {', '.join(sorted(named))}, but the quotation is from {path}; the "
+                      "evidence is attributed to the wrong file."]
+    claim_terms, quote_terms, window_terms = _terms(claim), _terms(quote), _terms(window)
+    if not any(_matches(w, window_terms) for w in claim_terms):
+        return None, ["The quotation occurs at the cited lines, but those lines share no term with the claim, so "
+                      "they are not evidence for it."]
+    reasons = []
+    if broad := _BROAD.search(claim):
+        reasons.append(f"The claim is worded more broadly ('{broad.group(0)}') than one quoted location can show.")
+    if impact := _IMPACT.search(claim):
+        reasons.append(f"The claim asserts impact or confirmation ('{impact.group(0)}') that static lines cannot "
+                       "show; nothing was run or exploited.")
+    # Title words that occur in the shown code name code ('eval', 'sql' -> SELECT); prose words ('called') do not.
+    excerpt_terms = _terms(excerpt)
+    named_code = [w for w in _terms(f.title) if _matches(w, excerpt_terms)]
+    if not named_code or not all(_matches(w, quote_terms) for w in named_code):
+        reasons.append("The quote is real, but it does not contain what the claim names; check that it shows the "
+                       "problem described.")
+    return ("needs_review" if reasons else "supported"), reasons
+
+
 def verify_finding(finding_id: str, f: _Finding, excerpts: dict[str, dict[str, Any]],
                    lines: dict[str, list[str]]) -> dict[str, Any]:
     out: dict[str, Any] = {
         "id": finding_id, "category": f.category, "title": " ".join(f.title.split()),
         "detail": " ".join(f.detail.split()), "recommendation": " ".join(f.recommendation.split()),
         "quote": " ".join(f.quote.split())[:400], "path": None, "start_line": None, "end_line": None, "reasons": [],
+        "support": None,
     }
     shown = excerpts.get(f.file_id.strip())
     if shown is None:
@@ -140,11 +208,17 @@ def verify_finding(finding_id: str, f: _Finding, excerpts: dict[str, dict[str, A
     window = _norm("\n".join(file_lines[max(0, start - 3): end + 2]))
     quote = _norm(f.quote)
     if len(quote) < MIN_QUOTE_CHARS or quote not in window:
-        out["reasons"].append("The quoted code was not found in the cited lines of the file.")
+        elsewhere = [e["path"] for e in excerpts.values() if len(quote) >= MIN_QUOTE_CHARS and e["path"] != shown["path"]
+                     and quote in _norm("\n".join(lines.get(e["path"], [])[e["start"] - 1: e["end"]]))]
+        out["reasons"].append("The quoted code was not found in the cited lines of the file"
+                              + (f"; it occurs in {', '.join(elsewhere)} instead." if elsewhere else "."))
         return {**out, "status": "insufficient_evidence"}
-    if not set(content_words(f"{f.title} {f.detail}")) & set(content_words(window.replace("_", " "))):
-        out["reasons"].append("The cited lines share no term with the claim; check that they are relevant evidence.")
-    return {**out, "status": CATEGORY_STATUS[f.category]}
+    excerpt = "\n".join(file_lines[shown["start"] - 1: shown["end"]])
+    support, reasons = _support(f, shown["path"], window, quote, excerpt)
+    out["reasons"] += reasons
+    if support is None:
+        return {**out, "status": "insufficient_evidence"}
+    return {**out, "status": CATEGORY_STATUS[f.category], "support": support}
 
 
 def verify_components(reply: ModelReply, excerpts: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
@@ -182,9 +256,11 @@ def render_markdown(report: dict[str, Any]) -> str:
     out = [f"# Repository investigation: {md_text(report['repo_name'])}", ""]
     out += [
         f"_Generated by AEGIS on {report['generated_at']}. Read-only: no repository code, script, test, build or "
-        "package manager was run, and nothing in the repository was written. Deterministic checks are labelled "
-        "Confirmed; model statements are labelled by how much of their evidence the code could check. A model "
-        "opinion is not verification._",
+        "package manager was run, and nothing in the repository was written. Deterministic checks report detected "
+        "patterns, not confirmed or exploited vulnerabilities. Model statements are labelled by how much of their "
+        "evidence the code could check: a real quote at the cited lines proves only that the code is there, so each "
+        "is marked either as supporting the narrow observation or as requiring review. A model opinion is not "
+        "verification._",
         "", "## Request", "", md_text(report["request"]), "",
         "## Summary (written by the model)", "", md_text(report["summary"]) or "_The model gave no summary._", "",
         "## Repository facts (deterministic)", "",
@@ -212,21 +288,26 @@ def render_markdown(report: dict[str, Any]) -> str:
         for c in report["components"]:
             refs = ", ".join(md_code(p) for p in c["paths"]) or "no valid file reference"
             out.append(f"- **{md_text(c['name'])}**: {md_text(c['responsibility'])} ({refs})")
-    out += ["", "## Confirmed observations (deterministic checks)", "",
-            "_A match confirms the pattern or absence at that location; whether it is a defect in context still "
-            "needs a human look._", ""]
-    out += [f"- **{f['id']} {md_text(f['title'])}** [{f['severity']}] {_ref(f['path'], f['line'])}"
+    out += ["", "## Detected patterns (deterministic checks)", "",
+            "_A match shows that this pattern (or absence) occurs at that location. It is not a confirmed, reproduced "
+            "or exploited vulnerability; whether it is a defect in context needs a human review. Severity applies "
+            "only if the match is a real problem._", ""]
+    out += [f"- **{f['id']} {md_text(f['title'])}** [pattern; severity if real: {f['severity']}] "
+            f"{_ref(f['path'], f['line'])}"
             + (f" — `{f['excerpt'].replace('`', '´')}`" if f.get("excerpt") else "")
             + f" — {md_text(f['detail'])} Recommendation: {md_text(f['recommendation'])}"
             for f in report["confirmed"]] or ["- None of the deterministic checks matched."]
-    headings = {"likely_issue": "Likely issues (model; cited code checked)",
-                "plausible_concern": "Plausible concerns (model; cited code checked)",
-                "best_practice": "General best practices (model; cited code checked)"}
+    headings = {"likely_issue": "Likely issues (model; cited location and quote checked)",
+                "plausible_concern": "Plausible concerns (model; cited location and quote checked)",
+                "best_practice": "General best practices (model; cited location and quote checked)"}
     for status, heading in headings.items():
         items = [f for f in report["model_findings"] if f["status"] == status]
         out += ["", f"## {heading}", ""]
         out += [f"- **{f['id']} {md_text(f['title'])}** {_ref(f['path'], f['start_line'], f['end_line'])} — "
-                f"{md_text(f['detail'])} Evidence: {md_code(f['quote'])} Recommendation: {md_text(f['recommendation'])}"
+                f"_{LABELS[f.get('support') or 'needs_review']}._ {md_text(f['detail'])} "
+                f"Evidence: {md_code(f['quote'])}"
+                + (f" Review note: {md_text(' '.join(f['reasons']))}" if f["reasons"] else "")
+                + f" Recommendation: {md_text(f['recommendation'])}"
                 for f in items] or ["- None."]
     if report["hypotheses"]:
         out += ["", "## Hypotheses (unverified; competing explanations)", ""]

@@ -1423,6 +1423,12 @@ const REPO_FINDING_STATUSES: readonly RepoFindingStatus[] = [
   'insufficient_evidence',
   'removed',
 ];
+/**
+ * How far a checked quote backs the claim (lexical test in the core, not semantic proof). A real quote at the
+ * cited lines proves only that the code is there: 'needs_review' means a human must judge the claim.
+ */
+export type RepoFindingSupport = 'supported' | 'needs_review';
+const REPO_FINDING_SUPPORT: readonly RepoFindingSupport[] = ['supported', 'needs_review'];
 
 export interface RepoTaskRecord {
   id: string;
@@ -1502,6 +1508,8 @@ export interface RepoModelFinding {
   quote: string;
   recommendation: string;
   reasons: string[];
+  /** Null for insufficient/removed findings and for reports stored before support levels existed. */
+  support: RepoFindingSupport | null;
 }
 
 export interface RepoHypothesis {
@@ -1715,9 +1723,13 @@ function parseRepoFinding(x: unknown): RepoModelFinding | null {
   if (!isString(x.detail) || !isNullableString(x.path) || !isNullableIntAny(x.start_line)) return null;
   if (!isNullableIntAny(x.end_line) || !isString(x.quote) || !isString(x.recommendation)) return null;
   if (!isStringArray(x.reasons)) return null;
+  const support = x.support ?? null;
+  if (support !== null && !oneOf(REPO_FINDING_SUPPORT, support)) return null;
+  if (support !== null && (x.status === 'insufficient_evidence' || x.status === 'removed')) return null;
   return {
     id: x.id,
     status: x.status,
+    support,
     title: x.title,
     detail: x.detail,
     path: x.path,

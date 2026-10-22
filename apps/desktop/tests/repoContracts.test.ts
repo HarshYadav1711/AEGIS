@@ -28,6 +28,16 @@ test('parses a real repository task detail; the digest stays with main', () => {
   assert.equal(report.unchanged, true);
 });
 
+test('support level separates a checked quote from a supported claim; older reports parse as unknown', () => {
+  const [checked, , insufficient] = detail.report.model_findings;
+  assert.ok(parseRepoDetailWithDigest(detail)?.detail.report?.findings.every((f) => f.support === null));
+  const withSupport = (f: object) => ({ ...detail, report: { ...detail.report, model_findings: [f] } });
+  const review = parseRepoDetailWithDigest(withSupport({ ...checked, support: 'needs_review' }));
+  assert.equal(review?.detail.report?.findings[0]?.support, 'needs_review');
+  assert.equal(parseRepoDetailWithDigest(withSupport({ ...checked, support: 'verified' })), null);
+  assert.equal(parseRepoDetailWithDigest(withSupport({ ...insufficient, support: 'supported' })), null);
+});
+
 test('rejects repository payloads outside the contract', () => {
   const broken = [
     { ...detail, task: { ...detail.task, status: 'trusted' } },

@@ -88,7 +88,8 @@ SYSTEM = (
     "- findings: up to 8 important problems or improvements. category is 'issue' (likely defect or risk visible "
     "in the code), 'concern' (plausible risk that depends on context) or 'practice' (general improvement). Each "
     "finding cites ONE excerpt file_id with start_line and end_line inside the lines shown for that file, and "
-    "quote: code copied exactly from those lines without the 'L<n>: ' prefix. Do not restate AEGIS checks D1, D2 "
+    "quote: code copied exactly from those lines without the 'L<n>: ' prefix. Claim only what those lines show; "
+    "put wider or impact claims in uncertainties. Do not restate AEGIS checks D1, D2 "
     "... unless you add something new.\n"
     "- hypotheses: only for an ambiguous problem with more than one plausible cause, else an empty list: the "
     "observed problem, 2-3 explanations each with supporting and contradicting evidence, and practical steps to "
@@ -405,8 +406,17 @@ class RepoManager:
             "Deterministic checks are lexical pattern matches; imports are resolved only for Python and relative "
             "JavaScript/TypeScript paths.",
             "For model findings, code checks that the cited lines were shown to the model and that the quote occurs "
-            "there; it cannot prove that the quoted code demonstrates the claim.",
+            "there; that proves only that the code is at that location, not that the claim is right. A lexical test "
+            "(not semantic verification) then marks a finding as supporting the narrow observation, or as requiring "
+            "review when the quote does not name what the claim is about or the claim is broader than one location; "
+            "quotes that share nothing with the claim or come from another file are insufficient evidence.",
+            "Deterministic checks report that a pattern occurs at a line; they do not confirm that it is exploitable "
+            "or a defect in context.",
         ]
+        review = [f["id"] for f in findings if f["support"] == "needs_review"]
+        if review:
+            limitations.append(f"{len(review)} model finding(s) require review before relying on them: "
+                               f"{', '.join(review)}.")
         if facts["truncated"]:
             limitations.append("The repository exceeded the inventory limits; part of it was not scanned.")
         not_read = {k: v for k, v in status.items() if k in ("limit", "too_large", "unreadable", "binary")}
@@ -557,14 +567,16 @@ class RepoManager:
         facts = report["facts"]
         checked = sum(f["status"] in ("likely_issue", "plausible_concern", "best_practice")
                       for f in report["model_findings"])
+        supported = sum(f.get("support") == "supported" for f in report["model_findings"])
         stack = ", ".join(f["label"] for f in facts["frameworks"][:5]) or ", ".join(list(facts["languages"])[:3])
         try:
             memory.record_task_outcome(
                 self._db, source_type="repo_task", task_id=task_id, observed_at=task["updated_at"],
                 scope=memory.scope_for(task["repo_name"]),
                 content=f"Read-only investigation of repository {task['repo_name']} ({stack or 'no stack detected'}): "
-                        f"{facts['files_read']} files checked, {len(report['confirmed'])} deterministic observation(s), "
-                        f"{checked} model finding(s) with checked evidence; report saved and verified in {Path(saved).parent} "
+                        f"{facts['files_read']} files checked, {len(report['confirmed'])} deterministic pattern match(es), "
+                        f"{checked} model finding(s) with checked references ({supported} supported by the quoted code, "
+                        f"{checked - supported} requiring review); report saved and verified in {Path(saved).parent} "
                         f"(task {task_id[:8]}).",
             )
         except Exception:  # the saved report is already journalled; a memory failure must not change that

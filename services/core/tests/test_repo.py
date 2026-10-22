@@ -279,12 +279,49 @@ def test_verify_finding_checks_real_lines() -> None:
     assert check(start_line=9, end_line=9) == "insufficient_evidence"
     assert check(file_id="F7") == "removed"
     assert check(quote="eval(x)") == "likely_issue"  # short code quotes count
-    unrelated = ModelReply.model_validate({"summary": "", "components": [], "hypotheses": [], "uncertainties": [],
-                                           "findings": [{"category": "practice", "title": "Missing LICENSE",
-                                                         "detail": "Add a license.", "file_id": "F1", "start_line": 1,
-                                                         "end_line": 1, "quote": "import os", "recommendation": "r"}]})
-    flagged = verify_finding("M2", unrelated.findings[0], shown, lines)
-    assert flagged["status"] == "best_practice" and "share no term with the claim" in flagged["reasons"][0]
+
+
+def test_quote_match_is_not_claim_verification() -> None:
+    """A real quote proves the code is there, not that the claim is right (evidence classification repair)."""
+    lines = {"a.py": ["import os", "", "def f(x):", "    return eval(x)"],
+             "b.py": ["def g(y):", "    return int(y)"]}
+    shown = {"F1": {"path": "a.py", "start": 1, "end": 4}, "F2": {"path": "b.py", "start": 1, "end": 2}}
+
+    def check(**kw: Any) -> dict[str, Any]:
+        base = {"category": "issue", "title": "eval called on parameter x", "detail": "f passes x to eval().",
+                "file_id": "F1", "start_line": 4, "end_line": 4, "quote": "return eval(x)", "recommendation": "r"}
+        finding = ModelReply.model_validate({"summary": "", "components": [], "findings": [{**base, **kw}],
+                                             "hypotheses": [], "uncertainties": []}).findings[0]
+        return verify_finding("M1", finding, shown, lines)
+
+    # A valid quotation that supports a narrow observation.
+    narrow = check()
+    assert narrow["status"] == "likely_issue" and narrow["support"] == "supported" and narrow["reasons"] == []
+    # An unrelated quotation: it occurs at the cited line, but has nothing to do with the claim.
+    unrelated = check(category="practice", title="Missing LICENSE", detail="Add a license.", start_line=1,
+                      end_line=1, quote="import os")
+    assert unrelated["status"] == "insufficient_evidence" and unrelated["support"] is None
+    assert "share no term with the claim" in unrelated["reasons"][0]
+    # An incorrect file: the quote is real, but in a.py, not in the cited b.py ...
+    wrong_id = check(file_id="F2", start_line=1, end_line=2)
+    assert wrong_id["status"] == "insufficient_evidence" and "occurs in a.py instead" in wrong_id["reasons"][0]
+    # ... or the claim names a different file than the one the quotation comes from.
+    wrong_name = check(title="eval called on parameter x in b.py")
+    assert wrong_name["status"] == "insufficient_evidence" and "wrong file" in wrong_name["reasons"][0]
+    assert check(title="eval called on parameter x in a.py")["support"] == "supported"
+    # A quotation that exists but does not establish the broader claim.
+    broad = check(title="All user input is evaluated as code", detail="Every function in the codebase calls eval.")
+    assert broad["status"] == "likely_issue" and broad["support"] == "needs_review"
+    assert "more broadly" in broad["reasons"][0]
+    impact = check(detail="An attacker can exploit f to run arbitrary code.")
+    assert impact["support"] == "needs_review" and "nothing was run or exploited" in impact["reasons"][0]
+    # Related lines, but the quote does not show what the title names: disclosed as requiring review.
+    vague = check(category="concern", title="Unvalidated parameter handling", detail="x reaches eval unchecked.",
+                  start_line=3, end_line=3, quote="def f(x):")
+    assert vague["status"] == "plausible_concern" and vague["support"] == "needs_review"
+    # Existing source-reference behaviour is unchanged: no support level without checked evidence.
+    assert check(quote="return exec(x)")["support"] is None
+    assert check(file_id="F7")["status"] == "removed" and check(file_id="F7")["support"] is None
 
 
 # ------------------------------------------------------------------ full workflow
@@ -301,6 +338,10 @@ def test_full_investigation_is_read_only_grounded_and_saved(  # type: ignore[no-
     assert by_title["SQL built with an f-string"]["status"] == "likely_issue"
     assert by_title["SQL built with an f-string"]["path"] == "inventory/store.py"
     assert by_title["Errors are swallowed"]["status"] == "plausible_concern"
+    # 'return None' is at the cited lines but does not show swallowed errors by itself: disclosed, not verified.
+    assert by_title["Errors are swallowed"]["support"] == "needs_review"
+    assert all(f["support"] is None for f in report["model_findings"]
+               if f["status"] in ("insufficient_evidence", "removed"))
     assert by_title["Repository is perfect"]["status"] == "insufficient_evidence"
     assert by_title["Ghost"]["status"] == "removed"
     assert by_title["Out of range"]["status"] == "insufficient_evidence"
@@ -318,7 +359,10 @@ def test_full_investigation_is_read_only_grounded_and_saved(  # type: ignore[no-
         assert needle not in sent
     md = detail["task"]["report_markdown"]
     assert "`inventory/store.py:13`" in md and "`inventory/api.py:14`" in md
-    assert "Confirmed (deterministic check)" not in md or "## Confirmed observations" in md
+    assert "## Detected patterns (deterministic checks)" in md and "Confirmed observations" not in md
+    assert "It is not a confirmed, reproduced or exploited vulnerability" in md
+    assert "Requires review: the quote is real" in md
+    assert "proves only that the code is at that location" in md
     assert "no repository code, script, test, build or package manager was run" in md
     assert "possible prompt injection" in md
     # Save: never inside the repository; a separate folder from the picker; verified; no overwrite.

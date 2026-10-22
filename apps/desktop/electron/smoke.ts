@@ -1087,7 +1087,7 @@ async function runRepoScenario(
   const planned = await waitFor(() => button('Approve and analyse'), 120_000);
   const plan = flat(await panelText());
   record('read-only plan shown before the model is called (checks, excerpts, memory, vault notes)',
-    planned && plan.includes('Confirmed observations') && plan.includes('Excerpts that will be sent') &&
+    planned && plan.includes('Detected patterns') && plan.includes('Excerpts that will be sent') &&
       !plan.includes('MongoDB'), plan.slice(0, 1500));
   await screenshot('14-repo-plan');
   if (vaultDir) {

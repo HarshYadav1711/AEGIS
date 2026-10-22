@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import type { RepoTasksState } from '../../hooks/useRepoTasks';
 import { isRepoTerminal } from '../../hooks/useRepoTasks';
-import type { RepoFindingStatus, RepoTaskStatus, RepoTaskSummary } from '../../shared/contracts';
+import type { RepoFindingStatus, RepoFindingSupport, RepoTaskStatus, RepoTaskSummary } from '../../shared/contracts';
 
 const STATUS_LABELS: Record<RepoTaskStatus, string> = {
   awaiting_repo: 'Choose the repository',
@@ -22,6 +22,11 @@ const FINDING_LABELS: Record<RepoFindingStatus, string> = {
   best_practice: 'General best practice',
   insufficient_evidence: 'Insufficient evidence',
   removed: 'Removed — cited code was never shown',
+};
+
+const SUPPORT_LABELS: Record<RepoFindingSupport, string> = {
+  supported: 'quote supports the narrow observation (lexical check, not proof)',
+  needs_review: 'requires review — the quote is real, but it was not established that it supports the claim',
 };
 
 const time = (iso: string) => new Date(iso).toLocaleTimeString();
@@ -108,12 +113,16 @@ export function RepoPanel({ repo }: { repo: RepoTasksState }) {
               permissions.
             </p>
           )}
-          <h3 className="report__heading">Confirmed observations (deterministic checks)</h3>
+          <h3 className="report__heading">Detected patterns (deterministic checks)</h3>
+          <p className="task__text">
+            A match shows the pattern occurs at that line. It is not a confirmed or exploited vulnerability; whether it
+            is a defect in context needs your review.
+          </p>
           <ul className="findings">
             {plan.checks.map((c) => (
               <li key={c.id} className="finding" data-status="confirmed">
                 <span className="finding__status" data-status="confirmed">
-                  {c.id} · {c.severity}
+                  {c.id} · pattern · severity if real: {c.severity}
                 </span>{' '}
                 {c.title} <span className="task__evidence">{ref(c.path, c.line)}</span>
               </li>
@@ -239,12 +248,16 @@ export function RepoPanel({ repo }: { repo: RepoTasksState }) {
           <h3 className="report__heading">Summary (model)</h3>
           <p className="task__text">{report.summary || 'The model gave no summary.'}</p>
           <h3 className="report__heading">Model findings, checked against the cited code</h3>
+          <p className="task__text">
+            A real quote at the cited lines proves only that the code is there, not that the claim is right.
+          </p>
           {report.findings.length === 0 && <p className="task__text">The model returned no findings.</p>}
           <ul className="findings">
             {report.findings.map((f) => (
-              <li key={f.id} className="finding" data-status={f.status}>
+              <li key={f.id} className="finding" data-status={f.status} data-support={f.support ?? undefined}>
                 <span className="finding__status" data-status={f.status}>
                   {f.id} · {FINDING_LABELS[f.status]}
+                  {f.support && ` · ${SUPPORT_LABELS[f.support]}`}
                 </span>{' '}
                 {f.title} <span className="task__path">{ref(f.path, f.startLine, f.endLine)}</span>
                 <span className="task__evidence">{f.detail}</span>
