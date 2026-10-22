@@ -34,6 +34,7 @@ const coreMessage = (over: Record<string, unknown> = {}) => ({
   duration_ms: 812,
   created_at: '2026-10-21T00:00:00.000+00:00',
   completed_at: '2026-10-21T00:00:01.000+00:00',
+  input_mode: 'text',
   ...over,
 });
 
@@ -66,13 +67,17 @@ test('stream events that contradict the contract are rejected', () => {
     { type: 'complete', message: coreMessage({ role: 'system' }) },
     { type: 'complete', message: coreMessage({ completion_tokens: -1 }) },
     { type: 'tool_call', name: 'shell' },
+    // Input mode is provenance and must be one of the two known values.
+    { type: 'complete', message: coreMessage({ input_mode: undefined }) },
+    { type: 'complete', message: coreMessage({ input_mode: 'telepathy' }) },
   ];
   for (const value of bad) assert.equal(parseStreamEvent(RID, value), null, JSON.stringify(value));
 });
 
 test('send arguments from the renderer are validated strictly', () => {
-  const ok = { conversationId: CID, requestId: RID, content: 'hi', model: 'llama3.2:3b' };
+  const ok = { conversationId: CID, requestId: RID, content: 'hi', model: 'llama3.2:3b', inputMode: 'text' };
   assert.deepEqual(parseSendMessageArgs(ok), ok);
+  assert.deepEqual(parseSendMessageArgs({ ...ok, inputMode: 'voice' }), { ...ok, inputMode: 'voice' });
   const bad: unknown[] = [
     undefined,
     { ...ok, content: '   ' },
@@ -82,6 +87,8 @@ test('send arguments from the renderer are validated strictly', () => {
     { ...ok, conversationId: 'abc' },
     { ...ok, requestId: RID.toUpperCase() },
     { ...ok, extra: true },
+    { ...ok, inputMode: 'approval' },
+    { conversationId: CID, requestId: RID, content: 'hi', model: 'llama3.2:3b' },
   ];
   for (const value of bad) assert.equal(parseSendMessageArgs(value), null, JSON.stringify(value));
 });

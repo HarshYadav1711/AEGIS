@@ -29,7 +29,7 @@ from app.memory.db import connect
 Kind = Literal["fact", "preference", "inference", "experience"]
 Status = Literal["candidate", "active", "disputed", "superseded", "rejected"]
 Verification = Literal["user_stated", "user_confirmed", "tool_verified", "model_proposed"]
-SourceType = Literal["user_message", "memory_ui", "file_task", "research_task", "repo_task"]
+SourceType = Literal["user_message", "memory_ui", "file_task", "research_task", "repo_task", "voice_command"]
 
 LIVE: tuple[str, ...] = ("candidate", "active", "disputed")
 MAX_CONTENT = 500
@@ -353,9 +353,12 @@ def remember_request(text: str) -> str | None:
 
 
 def capture_message(
-    path: Path, *, message_id: str, conversation_id: str, text: str, observed_at: str,
+    path: Path, *, message_id: str, conversation_id: str, text: str, observed_at: str, spoken: bool = False,
 ) -> Capture:
-    """Store an explicit "remember ..." chat message verbatim as the user's own statement."""
+    """Store an explicit "remember ..." chat message verbatim as the user's own statement.
+
+    `spoken`: the message was transcribed locally and shown to the user before it was sent (provenance only).
+    """
     body = remember_request(text)
     if body is None:
         return Capture("not_requested")
@@ -382,7 +385,8 @@ def capture_message(
             row = conn.execute("SELECT * FROM memory_facts WHERE source_event_id = ?", (done["id"],)).fetchone()
             return Capture("duplicate", _fact(row) if row else None)
         event_id = _event(conn, "remember", "user_message", message_id, conversation_id,
-                          "Explicit remember instruction in chat.")
+                          "Explicit remember instruction, spoken (local transcript, confirmed by the user in the app)."
+                          if spoken else "Explicit remember instruction in chat.")
         fact, outcome = _create(conn, event_id=event_id, content=content, kind=kind, subject=subject,
                                 scope=scope_for(settings["project"]), verification="user_stated",
                                 observed_at=observed_at)
@@ -460,16 +464,39 @@ def _resolve_subject(conn: sqlite3.Connection, winner: Fact, reason: str) -> Non
         _set_status(conn, other.id, "superseded", reason, superseded_by=winner.id)
 
 
-def correct(path: Path, fact_id: str, content: str) -> Fact:
-    """User correction: a new active version of the same lineage; the old version stays as history."""
+@dataclass(frozen=True)
+class VoiceSource:
+    """A reviewed spoken correction: its client request id (applied once) and the conversation it came from."""
+
+    request_id: str
+    conversation_id: str | None
+    detail: str
+
+
+def correct(path: Path, fact_id: str, content: str, *, voice: VoiceSource | None = None) -> Fact:
+    """User correction: a new active version of the same lineage; the old version stays as history.
+
+    `voice` records that the correction was spoken and confirmed in the app (source type `voice_command`).
+    """
+    source_type: SourceType = "voice_command" if voice else "memory_ui"
     try:
         content, _ = _validate(content, None)
     except MemoryError as error:
         if error.code == "secret_detected":
-            _refuse(path, "memory_ui", fact_id, None)
+            _refuse(path, source_type, None if voice else fact_id, voice.conversation_id if voice else None)
         raise
 
     def run(conn: sqlite3.Connection) -> Fact:
+        if voice is not None:
+            done = conn.execute(
+                "SELECT id FROM memory_events WHERE source_type = 'voice_command' AND source_id = ?",
+                (voice.request_id,),
+            ).fetchone()
+            if done is not None:
+                row = conn.execute("SELECT * FROM memory_facts WHERE source_event_id = ?", (done["id"],)).fetchone()
+                if row is None:
+                    raise MemoryError("memory_not_found", "This correction was applied, but that memory is gone.")
+                return _fact(row)
         old = _get(conn, fact_id)
         if old.status not in LIVE:
             raise MemoryError("not_current", "Only the current version of a memory can be corrected.")
@@ -483,7 +510,11 @@ def correct(path: Path, fact_id: str, content: str) -> Fact:
         ).fetchone()
         if clash is not None:
             raise MemoryError("duplicate_memory", "Another current memory already says exactly this.")
-        event_id = _event(conn, "corrected", "memory_ui", old.id, None, f"Corrected version {old.version}.")
+        if voice is None:
+            event_id = _event(conn, "corrected", "memory_ui", old.id, None, f"Corrected version {old.version}.")
+        else:
+            event_id = _event(conn, "corrected", "voice_command", voice.request_id, voice.conversation_id,
+                              f"Corrected version {old.version} by a spoken command: {voice.detail}")
         _set_status(conn, old.id, "superseded", "Corrected by the user.", superseded_by="pending")
         new = _insert(
             conn, event_id=event_id, content=content, kind="fact" if old.kind == "inference" else old.kind,
@@ -654,6 +685,60 @@ def in_scope(path: Path, scope: str, *, limit: int = 8) -> list[Fact]:
             (scope, _now(), limit),
         ).fetchall()
     return [_fact(r) for r in rows]
+
+
+def get_fact(path: Path, fact_id: str) -> Fact:
+    with _closing(path) as conn:
+        return _get(conn, fact_id)
+
+
+def current_on_subject(path: Path, scope: str, subject: str) -> list[Fact]:
+    """Current (active, unexpired) memories with this subject label in this scope."""
+    with _closing(path) as conn:
+        return [f for f in _same_subject_live(conn, scope, subject, exclude_lineage="") if f.current]
+
+
+def recent_in_conversation(path: Path, conversation_id: str, *, limit: int = 6) -> list[Fact]:
+    """Current memories this conversation most recently touched (what "that memory" can refer to).
+
+    First the versions put into the context of the latest reply that used any memory (in retrieval order), then
+    memories saved or corrected from this conversation, newest first. Superseded versions are followed to their
+    lineage's current version; rejected, disputed, candidate and expired memories are never returned.
+    """
+    with _closing(path) as conn:
+        latest = conn.execute(
+            """SELECT r.message_id FROM memory_retrievals r JOIN messages m ON m.id = r.message_id
+               WHERE m.conversation_id = ? ORDER BY m.seq DESC LIMIT 1""",
+            (conversation_id,),
+        ).fetchone()
+        used = conn.execute(
+            "SELECT f.* FROM memory_retrievals r JOIN memory_facts f ON f.id = r.fact_id "
+            "WHERE r.message_id = ? ORDER BY r.rank",
+            (latest["message_id"],),
+        ).fetchall() if latest else []
+        saved = conn.execute(
+            "SELECT f.* FROM memory_events e JOIN memory_facts f ON f.source_event_id = e.id "
+            "WHERE e.conversation_id = ? ORDER BY e.at DESC LIMIT ?",
+            (conversation_id, limit),
+        ).fetchall()
+    facts = [_fact(r) for r in [*used, *saved]]
+    # A memory that was used and then corrected is reached through its lineage's current version.
+    out: list[Fact] = []
+    for fact in facts:
+        current = fact if fact.current else _current_of_lineage(path, fact.lineage_id)
+        if current is not None and all(f.id != current.id for f in out) and current.kind != "experience":
+            out.append(current)
+    return out[:limit]
+
+
+def _current_of_lineage(path: Path, lineage_id: str) -> Fact | None:
+    with _closing(path) as conn:
+        row = conn.execute(
+            "SELECT * FROM memory_facts WHERE lineage_id = ? AND status = 'active' "
+            "AND (expires_at IS NULL OR expires_at > ?)",
+            (lineage_id, _now()),
+        ).fetchone()
+    return _fact(row) if row else None
 
 
 def record_retrievals(path: Path, message_id: str, facts: list[Fact]) -> None:

@@ -23,7 +23,7 @@ import re
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import asdict
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -45,6 +45,8 @@ class SendMessageRequest(BaseModel):
     client_request_id: uuid.UUID
     content: Annotated[str, Field(min_length=1, max_length=MAX_PROMPT_CHARS)]
     model: Annotated[str, Field(min_length=1, max_length=128)]
+    # Provenance only: a spoken message is still an ordinary message and gains no authority.
+    input_mode: Literal["text", "voice"] = "text"
 
     @field_validator("content")
     @classmethod
@@ -146,7 +148,7 @@ async def send_message(conversation_id: uuid.UUID, body: SendMessageRequest, req
         return _stream(_replay(existing))
 
     try:
-        turn = store.start_turn(path, convo_id, request_id, body.content, body.model)
+        turn = store.start_turn(path, convo_id, request_id, body.content, body.model, body.input_mode)
     except store.NotFound:
         raise HTTPException(404, detail="conversation_not_found") from None
     except store.GenerationInProgress:

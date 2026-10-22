@@ -51,6 +51,8 @@ class Message:
     duration_ms: int | None
     created_at: str
     completed_at: str | None
+    # 'voice' when the user message was spoken and transcribed locally (schema v8); assistant rows stay 'text'.
+    input_mode: Literal["text", "voice"] = "text"
 
 
 @dataclass(frozen=True)
@@ -150,7 +152,10 @@ def find_turn(path: Path, client_request_id: str) -> Turn | None:
     return Turn(_message(user), _message(assistant))
 
 
-def start_turn(path: Path, conversation_id: str, client_request_id: str, content: str, model: str) -> Turn:
+def start_turn(
+    path: Path, conversation_id: str, client_request_id: str, content: str, model: str,
+    input_mode: Literal["text", "voice"] = "text",
+) -> Turn:
     """Atomically append the user message and a pending assistant message."""
     now = _now()
     user_id, assistant_id = str(uuid.uuid4()), str(uuid.uuid4())
@@ -167,9 +172,9 @@ def start_turn(path: Path, conversation_id: str, client_request_id: str, content
             )
             conn.execute(
                 """INSERT INTO messages (id, conversation_id, seq, role, content, status, client_request_id, created_at,
-                                         completed_at)
-                   VALUES (?, ?, ?, 'user', ?, 'complete', ?, ?, ?)""",
-                (user_id, conversation_id, seq + 1, content, client_request_id, now, now),
+                                         completed_at, input_mode)
+                   VALUES (?, ?, ?, 'user', ?, 'complete', ?, ?, ?, ?)""",
+                (user_id, conversation_id, seq + 1, content, client_request_id, now, now, input_mode),
             )
             conn.execute(
                 """INSERT INTO messages (id, conversation_id, seq, role, content, status, reply_to, provider, model,

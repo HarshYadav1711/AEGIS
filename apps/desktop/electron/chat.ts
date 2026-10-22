@@ -67,7 +67,7 @@ export class ChatService {
       touch();
       const response = await this.backend.request(`/conversations/${args.conversationId}/messages`, {
         method: 'POST',
-        body: { client_request_id: args.requestId, content: args.content, model: args.model },
+        body: { client_request_id: args.requestId, content: args.content, model: args.model, input_mode: args.inputMode },
         signal: controller.signal,
       });
       if (!response.ok || !response.body) {

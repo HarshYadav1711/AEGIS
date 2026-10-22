@@ -227,9 +227,22 @@ const DESCRIPTIONS: Record<string, string> = {
   vault_requires_local_model: 'Vault notes can only be given to a local model; approve without vault notes.',
   proposal_not_found: 'That memory proposal does not exist in this report.',
   no_report: 'This task has no report yet.',
+  voice_unavailable: 'Voice is not available in the local core.',
+  voice_busy: 'Another recording is still being transcribed; wait a moment.',
+  request_in_progress: 'This voice request is already running.',
+  invalid_audio: 'The recording was not in the expected format (16 kHz mono WAV).',
+  audio_too_long: 'Recordings are limited to 60 seconds.',
+  audio_too_short: 'The recording was too short to contain speech.',
+  stt_unavailable: 'The local speech recognition model is not available (see Diagnostics).',
+  cancelled: 'Stopped.',
+  nothing_to_say: 'There is no readable text to speak.',
+  unknown_voice: 'That speech voice is not installed.',
+  tts_unavailable: 'Windows speech synthesis is not available.',
+  tts_timeout: 'Speech synthesis took too long and was stopped.',
+  tts_failed: 'Windows speech synthesis failed.',
 };
 
-async function errorFromResponse(response: Response): Promise<ChatError> {
+export async function errorFromResponse(response: Response): Promise<ChatError> {
   let code = `http_${response.status}`;
   try {
     const body = (await response.json()) as { detail?: unknown };

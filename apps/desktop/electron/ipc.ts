@@ -16,6 +16,10 @@ import {
   parseRepoApproveArgs,
   parseRepoProposalArgs,
   parseSendMessageArgs,
+  parseSpeakArgs,
+  parseTranscribeArgs,
+  parseVoiceCorrectionArgs,
+  parseVoiceInterpretArgs,
   type AppInfo,
   type BackendStatus,
   type IpcChannel,
@@ -28,6 +32,7 @@ import type { VaultService } from './vault';
 import type { RepoService } from './repo';
 import type { ResearchService } from './research';
 import { assertTrustedSender, type RendererLocation } from './security';
+import type { VoiceService } from './voice';
 
 const STATUS_CHANGED: IpcChannel = 'aegis:backend:status-changed';
 const CHAT_EVENT: IpcChannel = 'aegis:chat:event';
@@ -46,6 +51,7 @@ export function registerIpc(
   memory: MemoryService,
   vault: VaultService,
   repo: RepoService,
+  voice: VoiceService,
   appWindow: () => WebContents | null,
   location: RendererLocation,
 ): void {
@@ -156,6 +162,16 @@ export function registerIpc(
   handleOne('aegis:repo:save', uuidArg, (taskId) => repo.save(taskId, windowOf()));
   handleOne('aegis:repo:open-report', uuidArg, (taskId) => repo.openReport(taskId));
   handleOne('aegis:repo:accept-proposal', parseRepoProposalArgs, (args) => repo.acceptProposal(args));
+
+  // Voice. A finished recording (validated WAV), transcript text and ids only. Microphone capture itself happens in
+  // the renderer under the media permission granted in security.ts; nothing here can start it. No voice channel can
+  // approve a plan, run a tool or delete memory: a spoken request goes through the same routing as typed text.
+  handle('aegis:voice:status', () => voice.status());
+  handleOne('aegis:voice:transcribe', parseTranscribeArgs, (args) => voice.transcribe(args));
+  handleOne('aegis:voice:cancel', uuidArg, (requestId) => voice.cancel(requestId));
+  handleOne('aegis:voice:interpret', parseVoiceInterpretArgs, (args) => voice.interpret(args));
+  handleOne('aegis:voice:apply-correction', parseVoiceCorrectionArgs, (args) => voice.applyCorrection(args));
+  handleOne('aegis:voice:speak', parseSpeakArgs, (args) => voice.speak(args));
 
   backend.on('status', (status) => {
     const contents = appWindow();

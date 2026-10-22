@@ -31,6 +31,10 @@ import type {
   RepoProposalOutcome,
   RepoTaskDetail,
   RepoTaskSummary,
+  SpeechResult,
+  TranscriptResult,
+  VoiceInterpretation,
+  VoiceStatus,
 } from '../src/shared/contracts';
 
 const channels = {
@@ -84,6 +88,12 @@ const channels = {
   repoSave: 'aegis:repo:save',
   repoOpenReport: 'aegis:repo:open-report',
   repoAcceptProposal: 'aegis:repo:accept-proposal',
+  voiceStatus: 'aegis:voice:status',
+  voiceTranscribe: 'aegis:voice:transcribe',
+  voiceCancel: 'aegis:voice:cancel',
+  voiceInterpret: 'aegis:voice:interpret',
+  voiceApplyCorrection: 'aegis:voice:apply-correction',
+  voiceSpeak: 'aegis:voice:speak',
 } as const satisfies Record<string, IpcChannel>;
 
 /** Subscribe without ever handing the renderer the IpcRendererEvent (which exposes `sender`). */
@@ -164,6 +174,14 @@ const bridge: AegisBridge = {
   openRepoReport: (taskId) => ipcRenderer.invoke(channels.repoOpenReport, taskId) as Promise<ChatResult<true>>,
   acceptRepoProposal: (args) =>
     ipcRenderer.invoke(channels.repoAcceptProposal, args) as Promise<ChatResult<RepoProposalOutcome>>,
+  getVoiceStatus: () => ipcRenderer.invoke(channels.voiceStatus) as Promise<ChatResult<VoiceStatus>>,
+  transcribe: (args) => ipcRenderer.invoke(channels.voiceTranscribe, args) as Promise<ChatResult<TranscriptResult>>,
+  cancelVoiceJob: (requestId) => ipcRenderer.invoke(channels.voiceCancel, requestId) as Promise<ChatResult<true>>,
+  interpretVoice: (args) =>
+    ipcRenderer.invoke(channels.voiceInterpret, args) as Promise<ChatResult<VoiceInterpretation>>,
+  applyVoiceCorrection: (args) =>
+    ipcRenderer.invoke(channels.voiceApplyCorrection, args) as Promise<ChatResult<MemoryRecord>>,
+  speak: (args) => ipcRenderer.invoke(channels.voiceSpeak, args) as Promise<ChatResult<SpeechResult>>,
 };
 
 contextBridge.exposeInMainWorld('aegis', Object.freeze(bridge));

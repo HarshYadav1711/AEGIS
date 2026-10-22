@@ -613,7 +613,7 @@ def test_v6_database_upgrades_with_memory_intact(tmp_path: Path, monkeypatch) ->
         assert database.initialize(path).schema_version == 6
         fact, _ = memory.add_explicit(path, content="Kept across the upgrade.", kind="fact", subject=None,
                                       scope="global")
-    assert database.initialize(path).schema_version == 7
+    assert database.initialize(path).schema_version == database.LATEST_SCHEMA_VERSION
     kept = memory.describe(path, fact.id)
     assert kept["content"] == "Kept across the upgrade." and kept["source"]["source_type"] == "memory_ui"
     assert memory.record_task_outcome(path, source_type="repo_task", task_id="t-1", content="Repository task done.",

@@ -10,3 +10,10 @@ langgraph==1.2.16
 playwright==1.63.0
 # Frontmatter of Obsidian-compatible notes (M0A, safe_load only). MIT; already in the lock via langchain-core.
 PyYAML==6.0.3
+# Local push-to-talk speech recognition (Phase 5, user-approved 2026-10-22). MIT; runs the Whisper model already in the
+# local Hugging Face cache (local_files_only, never downloads). Pulls ctranslate2 (MIT), onnxruntime (MIT, Silero VAD),
+# tokenizers/huggingface_hub (Apache-2.0) and av (BSD-3-Clause, bundles FFmpeg; installed but not used: WAV is decoded
+# by the core itself because av 19 is incompatible with faster-whisper's own decoder).
+faster-whisper==1.2.1
+# Audio sample arrays for the speech engine. BSD-3-Clause (with bundled MIT/Zlib/0BSD/CC0 parts).
+numpy==2.5.4

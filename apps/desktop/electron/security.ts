@@ -1,5 +1,7 @@
 import { app, session, type IpcMainInvokeEvent, type WebContents } from 'electron';
 
+import { isMicrophoneRequest } from '../src/shared/permissions';
+
 /**
  * Describes the single renderer location the app is allowed to show.
  * Development: the Vite dev server origin. Production: the bundled index.html.
@@ -58,14 +60,24 @@ function devContentSecurityPolicy(devServerUrl: string): string {
 
 /**
  * App-wide hardening that must be installed before any window exists:
- * deny every permission request, block navigation away from the app,
- * block new windows and <webview>, and (in dev) attach a CSP header.
- * The production CSP is a <meta> tag injected into index.html at build time.
+ * deny every permission request except microphone capture for the app page,
+ * block navigation away from the app, block new windows and <webview>, and
+ * (in dev) attach a CSP header. The production CSP is a <meta> tag injected
+ * into index.html at build time.
  */
 export function installAppHardening(location: RendererLocation, devServerUrl: string | undefined): void {
   const ses = session.defaultSession;
-  ses.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
-  ses.setPermissionCheckHandler(() => false);
+  ses.setPermissionRequestHandler((contents, permission, callback, details) => {
+    const mediaTypes = 'mediaTypes' in details ? details.mediaTypes : undefined;
+    const pageUrl = contents.getURL();
+    callback(isMicrophoneRequest(location.isAllowed, permission, pageUrl, details.isMainFrame, mediaTypes));
+  });
+  ses.setPermissionCheckHandler((contents, permission, _origin, details) => {
+    // Device labels for the microphone picker need the check to pass for audio; nothing else does.
+    const pageUrl = contents?.getURL() ?? '';
+    const mediaType = 'mediaType' in details ? details.mediaType : undefined;
+    return isMicrophoneRequest(location.isAllowed, permission, pageUrl, details.isMainFrame, mediaType ? [mediaType] : undefined);
+  });
   ses.setDevicePermissionHandler(() => false);
 
   if (devServerUrl) {

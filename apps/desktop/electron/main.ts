@@ -14,6 +14,7 @@ import { RepoService } from './repo';
 import { ResearchService } from './research';
 import { createRendererLocation, installAppHardening } from './security';
 import { runSmokeTest } from './smoke';
+import { VoiceService } from './voice';
 
 // Only honour the dev server URL for unpackaged runs, and only on loopback.
 const devServerUrl = (() => {
@@ -37,6 +38,13 @@ if (smokeMode) {
   // Smoke runs create real conversations; keep them out of the user's own profile and database.
   // AEGIS_SMOKE_USER_DATA lets two smoke launches share one profile (to test a full app restart).
   app.setPath('userData', process.env.AEGIS_SMOKE_USER_DATA || mkdtempSync(path.join(os.tmpdir(), 'aegis-smoke-')));
+  // Voice smoke with a FIXTURE recording: Chromium's fake capture device plays this WAV through the real
+  // getUserMedia and permission path instead of a physical microphone (smoke runs only, never packaged).
+  const fakeMic = process.env.AEGIS_SMOKE_VOICE_SOURCE === 'fake' ? process.env.AEGIS_SMOKE_VOICE_WAV : undefined;
+  if (fakeMic) {
+    app.commandLine.appendSwitch('use-fake-device-for-media-stream');
+    app.commandLine.appendSwitch('use-file-for-fake-audio-capture', fakeMic);
+  }
 }
 
 app.enableSandbox();
@@ -65,6 +73,7 @@ async function bootstrap(): Promise<void> {
   const files = new FileTaskService(backend);
   const research = new ResearchService(backend);
   const repo = new RepoService(backend);
+  const voice = new VoiceService(backend);
   registerIpc(
     backend,
     chat,
@@ -73,6 +82,7 @@ async function bootstrap(): Promise<void> {
     new MemoryService(backend),
     new VaultService(backend),
     repo,
+    voice,
     appWindow,
     location,
   );
@@ -82,6 +92,7 @@ async function bootstrap(): Promise<void> {
     if (quitting) return;
     event.preventDefault();
     quitting = true;
+    voice.cancelAll();
     void backend.stop().finally(() => app.quit());
   });
   app.on('second-instance', () => {
@@ -91,6 +102,12 @@ async function bootstrap(): Promise<void> {
   app.on('window-all-closed', () => app.quit());
 
   mainWindow = createWindow();
+  // Microphone capture lives in the renderer and ends with it; work it requested must not outlive it either.
+  mainWindow.webContents.on('render-process-gone', () => voice.cancelAll());
+  mainWindow.webContents.on('did-start-navigation', (details) => {
+    if (details.isMainFrame && !details.isSameDocument) voice.cancelAll();
+  });
+  mainWindow.on('closed', () => voice.cancelAll());
   backend.start();
 
   if (smokeMode) {

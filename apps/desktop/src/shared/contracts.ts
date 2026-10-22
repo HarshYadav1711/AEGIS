@@ -55,7 +55,13 @@ export type IpcChannel =
   | 'aegis:repo:cancel'
   | 'aegis:repo:save'
   | 'aegis:repo:open-report'
-  | 'aegis:repo:accept-proposal';
+  | 'aegis:repo:accept-proposal'
+  | 'aegis:voice:status'
+  | 'aegis:voice:transcribe'
+  | 'aegis:voice:cancel'
+  | 'aegis:voice:interpret'
+  | 'aegis:voice:apply-correction'
+  | 'aegis:voice:speak';
 
 /**
  * Lifecycle of the local Python core as observed by Electron main.
@@ -144,7 +150,11 @@ export interface ChatMessageRecord {
   durationMs: number | null;
   createdAt: string;
   completedAt: string | null;
+  /** 'voice' when the user spoke the message (transcribed locally, confirmed in the app). */
+  inputMode: InputMode;
 }
+
+export type InputMode = 'text' | 'voice';
 
 export interface ConversationSummary {
   id: string;
@@ -172,6 +182,8 @@ export interface SendMessageArgs {
   requestId: string;
   content: string;
   model: string;
+  /** Provenance only; a spoken message gains no extra authority. */
+  inputMode: InputMode;
 }
 
 /** Progress pushed on 'aegis:chat:event' while a send is in flight. */
@@ -259,6 +271,17 @@ export interface AegisBridge {
   openRepoReport(taskId: string): Promise<ChatResult<true>>;
   /** Stores one code-built memory proposal from the report as the user's own fact. */
   acceptRepoProposal(args: RepoProposalArgs): Promise<ChatResult<RepoProposalOutcome>>;
+  getVoiceStatus(): Promise<ChatResult<VoiceStatus>>;
+  /** One finished push-to-talk recording (16 kHz mono PCM16 WAV); transcribed locally, never stored. */
+  transcribe(args: TranscribeArgs): Promise<ChatResult<TranscriptResult>>;
+  /** Stops a pending transcription or speech synthesis by its request id. */
+  cancelVoiceJob(requestId: string): Promise<ChatResult<true>>;
+  /** Deterministic classification of a transcript; never writes anything. */
+  interpretVoice(args: VoiceInterpretArgs): Promise<ChatResult<VoiceInterpretation>>;
+  /** Applies a reviewed spoken memory correction (a click in the app; a new version, old one kept). */
+  applyVoiceCorrection(args: VoiceCorrectionArgs): Promise<ChatResult<MemoryRecord>>;
+  /** Local text-to-speech; the renderer plays the WAV and reports real playback. */
+  speak(args: SpeakArgs): Promise<ChatResult<SpeechResult>>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -388,6 +411,7 @@ export function parseMessage(value: unknown): ChatMessageRecord | null {
   const nullableStrings = [v.provider, v.model, v.error_code, v.error_detail, v.finish_reason, v.completed_at];
   if (!nullableStrings.every(isNullableString) || typeof v.created_at !== 'string') return null;
   if (![v.prompt_tokens, v.completion_tokens, v.duration_ms].every(isNullableInt)) return null;
+  if (v.input_mode !== 'text' && v.input_mode !== 'voice') return null;
   return {
     id: v.id,
     conversationId: v.conversation_id,
@@ -405,6 +429,7 @@ export function parseMessage(value: unknown): ChatMessageRecord | null {
     durationMs: v.duration_ms as number | null,
     createdAt: v.created_at,
     completedAt: v.completed_at as string | null,
+    inputMode: v.input_mode,
   };
 }
 
@@ -480,12 +505,13 @@ export function parseStreamEvent(
 export function parseSendMessageArgs(value: unknown): SendMessageArgs | null {
   if (!isRecord(value)) return null;
   const keys = Object.keys(value).sort().join(',');
-  if (keys !== 'content,conversationId,model,requestId') return null;
-  const { conversationId, requestId, content, model } = value;
+  if (keys !== 'content,conversationId,inputMode,model,requestId') return null;
+  const { conversationId, requestId, content, model, inputMode } = value;
   if (!isUuid(conversationId) || !isUuid(requestId)) return null;
   if (typeof content !== 'string' || content.trim().length === 0 || content.length > MAX_PROMPT_CHARS) return null;
   if (typeof model !== 'string' || !MODEL_PATTERN.test(model)) return null;
-  return { conversationId, requestId, content, model };
+  if (inputMode !== 'text' && inputMode !== 'voice') return null;
+  return { conversationId, requestId, content, model, inputMode };
 }
 
 export function isChatProgressEvent(value: unknown): value is ChatProgressEvent {
@@ -1823,4 +1849,229 @@ export function parseRepoApproveArgs(value: unknown): RepoApproveArgs | null {
 export function parseRepoProposalArgs(value: unknown): RepoProposalArgs | null {
   if (!isRecord(value) || !hasExactKeys(value, 'index,taskId') || !isUuid(value.taskId)) return null;
   return isInt(value.index) && value.index >= 0 && value.index < 10 ? { taskId: value.taskId, index: value.index } : null;
+}
+
+// ---------------------------------------------------------------------------
+// Voice contracts (Phase 5)
+// ---------------------------------------------------------------------------
+
+export const VOICE_SAMPLE_RATE = 16_000;
+export const MAX_RECORDING_SECONDS = 60;
+/** WAV header + 60 s of 16 kHz mono 16-bit samples. */
+export const MAX_RECORDING_BYTES = 44 + MAX_RECORDING_SECONDS * VOICE_SAMPLE_RATE * 2;
+/** Text sent for speech is cut here; the core speaks at most its own (smaller) limit of it. */
+export const MAX_SPEAK_TEXT_CHARS = 20_000;
+export const MAX_SPEECH_BYTES = 16 * 1024 * 1024;
+
+export interface VoiceStatus {
+  stt: { engine: string; model: string; available: boolean; detail: string };
+  tts: { engine: string; available: boolean; detail: string; voices: string[] };
+  limits: { sampleRate: number; maxSeconds: number; maxSpeakChars: number };
+}
+
+export interface TranscribeArgs {
+  requestId: string;
+  audio: Uint8Array;
+}
+
+export type TranscriptStatus = 'ok' | 'silence' | 'unintelligible';
+
+export interface TranscriptResult {
+  requestId: string;
+  status: TranscriptStatus;
+  text: string;
+  audioMs: number;
+  processingMs: number;
+  engine: string;
+  model: string;
+  lowConfidence: boolean;
+}
+
+export type VoiceCommandKind = 'chat' | 'recall' | 'remember' | 'correct' | 'forget' | 'approval' | 'empty';
+export const VOICE_COMMAND_KINDS: readonly VoiceCommandKind[] = [
+  'chat',
+  'recall',
+  'remember',
+  'correct',
+  'forget',
+  'approval',
+  'empty',
+];
+export type VoiceCategory =
+  | 'explicit_correction'
+  | 'project_exception'
+  | 'temporary'
+  | 'transcription_doubt'
+  | 'conflicting_claim';
+export const VOICE_CATEGORIES: readonly VoiceCategory[] = [
+  'explicit_correction',
+  'project_exception',
+  'temporary',
+  'transcription_doubt',
+  'conflicting_claim',
+];
+export type CorrectionCategory = Exclude<VoiceCategory, 'conflicting_claim'>;
+
+export interface VoiceInterpretArgs {
+  text: string;
+  conversationId: string | null;
+  lowConfidence: boolean;
+}
+
+export interface VoiceInterpretation {
+  kind: VoiceCommandKind;
+  text: string;
+  reviewRequired: boolean;
+  reason: string;
+  category: VoiceCategory | null;
+  body: string | null;
+  target: MemoryRecord | null;
+  candidates: MemoryRecord[];
+  proposedContent: string | null;
+  conflict: MemoryRecord | null;
+}
+
+export interface VoiceCorrectionArgs {
+  requestId: string;
+  targetId: string;
+  content: string;
+  category: CorrectionCategory;
+  conversationId: string | null;
+}
+
+export interface SpeakArgs {
+  requestId: string;
+  text: string;
+  voice: string | null;
+}
+
+export interface SpeechResult {
+  audio: Uint8Array;
+  voice: string;
+  synthesisMs: number;
+  audioMs: number;
+  spokenChars: number;
+  truncated: boolean;
+}
+
+export interface WavInfo {
+  sampleRate: number;
+  channels: number;
+  bitsPerSample: number;
+  dataBytes: number;
+}
+
+/** Minimal RIFF/WAVE PCM header check (the fmt chunk must come first, as the app writes it). */
+export function parseWavHeader(bytes: Uint8Array): WavInfo | null {
+  if (bytes.length < 44) return null;
+  const tag = (offset: number) => String.fromCharCode(...bytes.subarray(offset, offset + 4));
+  if (tag(0) !== 'RIFF' || tag(8) !== 'WAVE' || tag(12) !== 'fmt ') return null;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (view.getUint16(20, true) !== 1) return null; // PCM
+  const channels = view.getUint16(22, true);
+  const sampleRate = view.getUint32(24, true);
+  const bitsPerSample = view.getUint16(34, true);
+  let offset = 20 + view.getUint32(16, true);
+  while (offset + 8 <= bytes.length) {
+    const size = view.getUint32(offset + 4, true);
+    if (tag(offset) === 'data') {
+      return size <= bytes.length - offset - 8 ? { sampleRate, channels, bitsPerSample, dataBytes: size } : null;
+    }
+    offset += 8 + size + (size % 2);
+  }
+  return null;
+}
+
+/** A push-to-talk recording from the renderer: exactly the format the core accepts, within the size limit. */
+export function parseTranscribeArgs(value: unknown): TranscribeArgs | null {
+  if (!isRecord(value) || !hasExactKeys(value, 'audio,requestId') || !isUuid(value.requestId)) return null;
+  const audio = value.audio;
+  if (!(audio instanceof Uint8Array) || audio.length > MAX_RECORDING_BYTES) return null;
+  const info = parseWavHeader(audio);
+  if (!info || info.sampleRate !== VOICE_SAMPLE_RATE || info.channels !== 1 || info.bitsPerSample !== 16) return null;
+  return { requestId: value.requestId, audio };
+}
+
+export function parseVoiceInterpretArgs(value: unknown): VoiceInterpretArgs | null {
+  if (!isRecord(value) || !hasExactKeys(value, 'conversationId,lowConfidence,text')) return null;
+  const { text, conversationId, lowConfidence } = value;
+  if (typeof text !== 'string' || text.trim().length === 0 || text.length > 2000) return null;
+  if (conversationId !== null && !isUuid(conversationId)) return null;
+  return typeof lowConfidence === 'boolean' ? { text, conversationId, lowConfidence } : null;
+}
+
+export function parseVoiceCorrectionArgs(value: unknown): VoiceCorrectionArgs | null {
+  if (!isRecord(value) || !hasExactKeys(value, 'category,content,conversationId,requestId,targetId')) return null;
+  const { requestId, targetId, content, category, conversationId } = value;
+  if (!isUuid(requestId) || !isUuid(targetId) || (conversationId !== null && !isUuid(conversationId))) return null;
+  if (typeof content !== 'string' || content.trim().length === 0 || content.length > MAX_MEMORY_CHARS) return null;
+  if (category === 'conflicting_claim' || !oneOf(VOICE_CATEGORIES, category)) return null;
+  return { requestId, targetId, content, category: category as CorrectionCategory, conversationId };
+}
+
+export function parseSpeakArgs(value: unknown): SpeakArgs | null {
+  if (!isRecord(value) || !hasExactKeys(value, 'requestId,text,voice') || !isUuid(value.requestId)) return null;
+  const { text, voice } = value;
+  if (typeof text !== 'string' || text.trim().length === 0 || text.length > MAX_SPEAK_TEXT_CHARS) return null;
+  if (voice !== null && (typeof voice !== 'string' || !/^[A-Za-z0-9 ()._-]{1,80}$/.test(voice))) return null;
+  return { requestId: value.requestId, text, voice };
+}
+
+export function parseVoiceStatus(value: unknown): VoiceStatus | null {
+  if (!isRecord(value) || !isRecord(value.stt) || !isRecord(value.tts) || !isRecord(value.limits)) return null;
+  const { stt, tts, limits } = value;
+  if (!isString(stt.engine) || !isString(stt.model) || typeof stt.available !== 'boolean' || !isString(stt.detail)) {
+    return null;
+  }
+  if (!isString(tts.engine) || typeof tts.available !== 'boolean' || !isString(tts.detail)) return null;
+  if (!Array.isArray(tts.voices) || !tts.voices.every(isString)) return null;
+  if (!isInt(limits.sample_rate) || !isInt(limits.max_seconds) || !isInt(limits.max_speak_chars)) return null;
+  return {
+    stt: { engine: stt.engine, model: stt.model, available: stt.available, detail: stt.detail },
+    tts: { engine: tts.engine, available: tts.available, detail: tts.detail, voices: tts.voices as string[] },
+    limits: { sampleRate: limits.sample_rate, maxSeconds: limits.max_seconds, maxSpeakChars: limits.max_speak_chars },
+  };
+}
+
+export function parseTranscriptResult(value: unknown): TranscriptResult | null {
+  if (!isRecord(value) || !isUuid(value.request_id)) return null;
+  const v = value;
+  if (v.status !== 'ok' && v.status !== 'silence' && v.status !== 'unintelligible') return null;
+  if (!isString(v.text) || v.text.length > 20_000 || !isInt(v.audio_ms) || !isInt(v.processing_ms)) return null;
+  if (v.audio_ms < 0 || v.processing_ms < 0) return null;
+  if (!isString(v.engine) || !isString(v.model) || typeof v.low_confidence !== 'boolean') return null;
+  return {
+    requestId: value.request_id,
+    status: v.status,
+    text: v.text,
+    audioMs: v.audio_ms,
+    processingMs: v.processing_ms,
+    engine: v.engine,
+    model: v.model,
+    lowConfidence: v.low_confidence,
+  };
+}
+
+export function parseVoiceInterpretation(value: unknown): VoiceInterpretation | null {
+  if (!isRecord(value) || !oneOf(VOICE_COMMAND_KINDS, value.kind)) return null;
+  const v = value;
+  if (!isString(v.text) || typeof v.review_required !== 'boolean' || !isString(v.reason)) return null;
+  if (v.category !== null && !oneOf(VOICE_CATEGORIES, v.category)) return null;
+  if (!isNullableString(v.body) || !isNullableString(v.proposed_content)) return null;
+  const target = v.target === null ? null : parseMemoryRecord(v.target);
+  const conflict = v.conflict === null ? null : parseMemoryRecord(v.conflict);
+  const candidates = parseAll(v.candidates, parseMemoryRecord);
+  if ((v.target !== null && !target) || (v.conflict !== null && !conflict) || !candidates) return null;
+  return {
+    kind: v.kind as VoiceCommandKind,
+    text: v.text,
+    reviewRequired: v.review_required,
+    reason: v.reason,
+    category: v.category as VoiceCategory | null,
+    body: v.body as string | null,
+    target,
+    candidates,
+    proposedContent: v.proposed_content as string | null,
+    conflict,
+  };
 }

@@ -79,7 +79,9 @@ export function Transcript({ messages, loading, busy }: TranscriptProps) {
       <ol className="transcript__list" aria-label="Conversation messages">
         {messages.map((m) => (
           <li key={m.id} className="message" data-role={m.role} data-status={m.status}>
-            <span className="message__who">{m.role === 'user' ? 'You' : 'AEGIS'}</span>
+            <span className="message__who">
+              {m.role === 'user' ? (m.inputMode === 'voice' ? 'You (spoken, transcribed locally)' : 'You') : 'AEGIS'}
+            </span>
             {m.content ? (
               <p className="message__text">{m.content}</p>
             ) : (

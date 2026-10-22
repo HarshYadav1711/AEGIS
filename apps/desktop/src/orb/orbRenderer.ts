@@ -70,6 +70,9 @@ export class OrbRenderer {
   private time = 0;
   private spinAngle = 0;
   private sweepAngle = 0;
+  /** Real audio level (0..1) of the live microphone or playing speech, smoothed per frame. */
+  private levelSource: (() => number) | null = null;
+  private level = 0;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -87,6 +90,16 @@ export class OrbRenderer {
     this.targetTint = tint;
     if (this.reducedMotion) this.snapToTarget();
     this.kick();
+  }
+
+  /**
+   * Drive particle displacement and core size from a real audio level (microphone
+   * capture or speech playback). Null when no audio is live. Ignored in reduced
+   * motion, where the orb stays a static frame.
+   */
+  setLevelSource(source: (() => number) | null): void {
+    this.levelSource = source;
+    if (!source) this.level = 0;
   }
 
   setReducedMotion(reduced: boolean): void {
@@ -143,6 +156,8 @@ export class OrbRenderer {
       m[key] = key === 'maxFps' ? t.maxFps : approach(m[key], t[key], dt, 3);
     }
     for (let i = 0; i < 3; i++) this.tint[i] = approach(this.tint[i]!, this.targetTint[i]!, dt, 3);
+    const raw = this.levelSource ? Math.max(0, Math.min(1, this.levelSource())) : 0;
+    this.level = approach(this.level, raw, dt, raw > this.level ? 18 : 6); // fast attack, slower release
     this.spinAngle += m.spin * dt;
     this.sweepAngle += 1.4 * dt;
     this.draw();
@@ -170,12 +185,13 @@ export class OrbRenderer {
     const m = this.motion;
     const tint = this.tint;
     const pulse = 0.5 + 0.5 * Math.sin(this.time * Math.PI * 2 * m.pulseHz);
+    const level = this.reducedMotion ? 0 : this.level;
 
     ctx.clearRect(0, 0, w, h);
     ctx.globalCompositeOperation = 'lighter';
 
     // Core glow.
-    const coreR = R * (0.42 + 0.06 * pulse * m.energy);
+    const coreR = R * (0.42 + 0.06 * pulse * m.energy + 0.16 * level);
     const core = ctx.createRadialGradient(cx, cy, 0, cx, cy, coreR);
     core.addColorStop(0, rgba(tint, (0.75 + 0.25 * pulse) * m.energy * m.presence));
     core.addColorStop(0.4, rgba(tint, 0.3 * m.energy * m.presence));
@@ -209,7 +225,8 @@ export class OrbRenderer {
     const dotBase = Math.max(1, R * 0.011);
     for (let i = 0; i < this.shell.length; i++) {
       const base = this.shell[i]!;
-      const wobble = 1 + m.turbulence * Math.sin(this.time * 2.3 + i * 1.7) * Math.cos(this.time * 1.1 + i * 0.6);
+      const charge = m.turbulence + 0.32 * level;
+      const wobble = 1 + charge * Math.sin(this.time * 2.3 + i * 1.7) * Math.cos(this.time * 1.1 + i * 0.6);
       const p = rotate(base, 0.35, this.spinAngle, 0);
       const depth = (p.z + 1) / 2;
       const r = R * wobble;

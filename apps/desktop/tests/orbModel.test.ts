@@ -67,16 +67,14 @@ test('idle means a model is ready; otherwise the orb reports a problem', () => {
   assert.equal(orbStateFor(online, 'none', false), 'error');
 });
 
-test('text output is distinct from audio and audio stays unreachable', () => {
+test('text output is distinct from audio; chat alone never claims listening or speaking', () => {
   assert.notEqual(ORB_LABELS.responding, ORB_LABELS.speaking);
   assert.notDeepEqual(ORB_MOTION.responding, ORB_MOTION.speaking);
   const activities = ['none', 'thinking', 'responding', 'succeeded', 'failed', 'cancelled'] as const;
   const reachable = new Set(activities.flatMap((a) => [orbStateFor(online, a, true), orbStateFor(online, a, false)]));
   for (const state of reachable) assert.ok(LIVE_ORB_STATES.includes(state), state);
-  for (const notYet of ['speaking', 'listening'] as const) {
-    assert.ok(!reachable.has(notYet), notYet);
-    assert.ok(!LIVE_ORB_STATES.includes(notYet), notYet);
-  }
+  // Streaming text is "responding"; only real microphone capture / audio playback (voice activity) reach these.
+  for (const audioOnly of ['speaking', 'listening', 'transcribing'] as const) assert.ok(!reachable.has(audioOnly), audioOnly);
   // Chat alone never claims tool activity; those states come only from file-task events.
   for (const toolState of ['executing', 'planning', 'waiting_approval'] as const) assert.ok(!reachable.has(toolState));
 });
@@ -96,4 +94,30 @@ test('file-task activity drives planning, approval and execution states', () => 
     'interpreting', 'waiting_folder', 'planning', 'waiting_approval', 'executing', 'succeeded', 'failed', 'cancelled',
   ] as const;
   for (const a of activities) assert.ok(LIVE_ORB_STATES.includes(orbStateFor(online, 'none', true, a)), a);
+});
+
+test('voice activity drives listening, transcribing and speaking only while the core is online', () => {
+  assert.equal(orbStateFor(online, 'none', true, 'none', 'listening'), 'listening');
+  assert.equal(orbStateFor(online, 'none', true, 'none', 'transcribing'), 'transcribing');
+  assert.equal(orbStateFor(online, 'none', true, 'none', 'speaking'), 'speaking');
+  assert.equal(orbStateFor(online, 'none', true, 'none', 'applying'), 'executing');
+  assert.equal(orbStateFor(online, 'none', true, 'none', 'succeeded'), 'succeeded');
+  assert.equal(orbStateFor(online, 'none', true, 'none', 'failed'), 'error');
+  assert.equal(orbStateFor(online, 'none', true, 'none', 'cancelled'), 'cancelled');
+  // A dead core is never shown as listening or speaking.
+  assert.equal(orbStateFor(status('offline'), 'none', true, 'none', 'listening'), 'offline');
+  assert.equal(orbStateFor(status('degraded'), 'none', true, 'none', 'speaking'), 'error');
+  for (const v of ['listening', 'transcribing', 'speaking', 'applying', 'succeeded', 'failed', 'cancelled'] as const) {
+    assert.ok(LIVE_ORB_STATES.includes(orbStateFor(online, 'none', true, 'none', v)), v);
+  }
+});
+
+test('live audio outranks text and tasks; a finished voice step does not hide a running request', () => {
+  // Speech plays after the reply is complete: speaking wins over the settled chat state.
+  assert.equal(orbStateFor(online, 'succeeded', true, 'none', 'speaking'), 'speaking');
+  // A voice step that merely ended (Done/Cancelled) never masks a request that is still running.
+  assert.equal(orbStateFor(online, 'thinking', true, 'none', 'succeeded'), 'thinking');
+  assert.equal(orbStateFor(online, 'none', true, 'waiting_approval', 'cancelled'), 'waiting_approval');
+  assert.equal(orbStateFor(online, 'responding', true, 'none', 'none'), 'responding');
+  assert.notEqual(ORB_LABELS.transcribing, ORB_LABELS.thinking);
 });

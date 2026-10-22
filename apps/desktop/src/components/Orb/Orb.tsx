@@ -10,6 +10,8 @@ interface OrbProps {
   isPreview: boolean;
   onActivate: () => void;
   describedBy: string;
+  /** Live audio level (0..1) of the microphone or playing speech, read every frame; null when no audio is live. */
+  level?: (() => number) | null;
 }
 
 /** Reads the per-state tint token (`--orb-tint: r g b`) from CSS. */
@@ -22,7 +24,7 @@ function readTint(element: Element): Rgb {
   return [200, 200, 200];
 }
 
-export function Orb({ state, reducedMotion, isPreview, onActivate, describedBy }: OrbProps) {
+export function Orb({ state, reducedMotion, isPreview, onActivate, describedBy, level = null }: OrbProps) {
   const buttonRef = useRef<HTMLButtonElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<OrbRenderer | null>(null);
@@ -41,6 +43,11 @@ export function Orb({ state, reducedMotion, isPreview, onActivate, describedBy }
   useEffect(() => {
     rendererRef.current?.setReducedMotion(reducedMotion);
   }, [reducedMotion]);
+
+  useEffect(() => {
+    // A preview never shows a live level: it is simulated.
+    rendererRef.current?.setLevelSource(isPreview ? null : level);
+  }, [level, isPreview]);
 
   useEffect(() => {
     // data-orb-state is already applied, so the CSS tint for this state is resolvable.

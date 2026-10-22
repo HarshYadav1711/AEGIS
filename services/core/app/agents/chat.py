@@ -115,7 +115,7 @@ class GenerationManager:
         # Memory is a separate, labelled system note; the user's message is passed on unchanged.
         capture = memory.capture_message(
             self._db, message_id=turn.user.id, conversation_id=turn.user.conversation_id,
-            text=turn.user.content, observed_at=turn.user.created_at,
+            text=turn.user.content, observed_at=turn.user.created_at, spoken=turn.user.input_mode == "voice",
         )
         notes = memory.retrieve(self._db, turn.user.content)
         memory.record_retrievals(self._db, turn.assistant.id, notes)

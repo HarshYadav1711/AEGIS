@@ -1,4 +1,5 @@
 import { app, dialog, shell, type BrowserWindow } from 'electron';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -31,6 +32,9 @@ import type { BackendManager } from './backend';
  * With AEGIS_SMOKE_REPO_MODEL=<model>, AEGIS_SMOKE_REPO_DIR=<sample repository> and AEGIS_SMOKE_REPO_OUT=<folder>
  * (optionally AEGIS_SMOKE_REPO_VAULT_DIR=<new or empty folder>) it runs the REAL read-only repository
  * investigation through the UI (see runRepoScenario); only the native folder dialogs are answered here.
+ * With AEGIS_SMOKE_VOICE_MODEL=<model> and AEGIS_SMOKE_VOICE_STEP=<step> it runs one REAL voice step through the
+ * microphone button (see runVoiceScenario): real getUserMedia capture, local Whisper transcription, the real model
+ * and local Windows speech playback.
  * Prints one `AEGIS_SMOKE_RESULT <json>` line and returns the exit code.
  */
 export async function runSmokeTest(window: BrowserWindow, backend: BackendManager): Promise<number> {
@@ -81,6 +85,10 @@ export async function runSmokeTest(window: BrowserWindow, backend: BackendManage
     writeFileSync(path.join(shotDir, `${name}.png`), image.toPNG());
   }
 
+  // Screenshots of an occluded window can be stale on Windows; keep the smoke window painted and in front.
+  contents.setBackgroundThrottling(false);
+  window.moveTop();
+  window.focus();
   try {
     if (contents.isLoading()) await new Promise<void>((resolve) => contents.once('did-finish-load', () => resolve()));
 
@@ -140,6 +148,12 @@ export async function runSmokeTest(window: BrowserWindow, backend: BackendManage
       'openRepoReport',
       'rejectRepoPlan',
       'saveRepoReport',
+      'getVoiceStatus',
+      'transcribe',
+      'cancelVoiceJob',
+      'interpretVoice',
+      'applyVoiceCorrection',
+      'speak',
     ].sort();
     record('bridge exposes only the typed API', JSON.stringify(probe.bridgeKeys) === JSON.stringify(expectedKeys), probe.bridgeKeys.join(','));
 
@@ -361,6 +375,62 @@ export async function runSmokeTest(window: BrowserWindow, backend: BackendManage
       vaultRejected.join(','),
     );
 
+    // Voice IPC accepts one validated recording, text and ids only: never a path, a status or an approval.
+    const voiceRejected = await evaluate<string[]>(`(async () => {
+      const out = [];
+      const id = crypto.randomUUID();
+      const wav = new Uint8Array(44 + 3200);
+      const t = (o, s) => { for (let i = 0; i < 4; i++) wav[o + i] = s.charCodeAt(i); };
+      t(0, 'RIFF'); t(8, 'WAVE'); t(12, 'fmt '); t(36, 'data');
+      const v = new DataView(wav.buffer);
+      v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 2, true); v.setUint32(24, 16000, true);
+      v.setUint16(34, 16, true); v.setUint32(40, 3200, true); // stereo: refused
+      const attempts = [
+        () => window.aegis.transcribe({ requestId: id, audio: 'C:/Users/me/secret.wav' }),
+        () => window.aegis.transcribe({ requestId: id, audio: wav }),
+        () => window.aegis.transcribe({ requestId: id, audio: new Uint8Array(3 * 1024 * 1024) }),
+        () => window.aegis.speak({ requestId: id, text: 'hi', voice: '$(Start-Process calc)' }),
+        () => window.aegis.applyVoiceCorrection({ requestId: id, targetId: id, content: 'x', category: 'approve',
+                                                  conversationId: null }),
+        () => window.aegis.applyVoiceCorrection({ requestId: id, targetId: id, content: 'x', category: 'temporary',
+                                                  conversationId: null, status: 'active' }),
+        () => window.aegis.interpretVoice({ text: 'approve', conversationId: null, lowConfidence: false, approve: true }),
+        () => window.aegis.cancelVoiceJob('../jobs'),
+        () => window.aegis.sendMessage({ conversationId: id, requestId: id, content: 'hi', model: 'm', inputMode: 'admin' }),
+      ];
+      for (const attempt of attempts) {
+        try { await attempt(); out.push('accepted'); } catch { out.push('rejected'); }
+      }
+      return out;
+    })()`);
+    record(
+      'malformed voice IPC arguments (paths, wrong audio, voice injection, status/approval fields) are rejected',
+      voiceRejected.every((r) => r === 'rejected'),
+      voiceRejected.join(','),
+    );
+    const voiceStatus = await evaluate<{ ok: boolean; value?: { stt: { available: boolean; detail: string }; tts: { available: boolean; detail: string } } }>(
+      `window.aegis.getVoiceStatus()`,
+    );
+    record(
+      'voice status reports the local engines (no network)',
+      voiceStatus.ok === true,
+      voiceStatus.ok ? `STT: ${voiceStatus.value?.stt.detail} | TTS: ${voiceStatus.value?.tts.detail}` : JSON.stringify(voiceStatus),
+    );
+    const spokenApproval = await evaluate<{ ok: boolean; value?: { kind: string; reviewRequired: boolean } }>(
+      `window.aegis.interpretVoice({ text: 'Yes, approve the plan and move the files', conversationId: null, lowConfidence: false })`,
+    );
+    record(
+      'a spoken approval is never treated as an approval',
+      spokenApproval.value?.kind === 'approval' && spokenApproval.value.reviewRequired === true,
+      JSON.stringify(spokenApproval.value ?? spokenApproval),
+    );
+    // Only microphone capture is permitted; camera and screen capture stay denied (no device is opened by this check).
+    const camera = await evaluate<string>(`navigator.mediaDevices.getUserMedia({ video: true })
+      .then((s) => { s.getTracks().forEach((t) => t.stop()); return 'granted'; }, (e) => e.name)`);
+    const screen = await evaluate<string>(`navigator.mediaDevices.getDisplayMedia({ video: true })
+      .then((s) => { s.getTracks().forEach((t) => t.stop()); return 'granted'; }, (e) => e.name)`);
+    record('camera and screen capture are denied', camera !== 'granted' && screen !== 'granted', `camera=${camera} screen=${screen}`);
+
     const port = backend.port;
     if (port !== null) {
       const noAuth = await fetch(`http://127.0.0.1:${port}/health`).then((r) => r.status, () => -1);
@@ -443,6 +513,13 @@ export async function runSmokeTest(window: BrowserWindow, backend: BackendManage
         process.env.AEGIS_SMOKE_REPO_VAULT_DIR?.trim() || null);
     } else {
       console.log('[smoke] real repository scenario NOT CONFIGURED (set AEGIS_SMOKE_REPO_MODEL, _DIR and _OUT)');
+    }
+    const voiceModel = process.env.AEGIS_SMOKE_VOICE_MODEL?.trim();
+    if (voiceModel) {
+      const step = process.env.AEGIS_SMOKE_VOICE_STEP?.trim() || 'ask';
+      await runVoiceScenario({ evaluate, record, screenshot, waitForOrb, backend, model: voiceModel }, step, readyState);
+    } else {
+      console.log('[smoke] real voice scenario NOT CONFIGURED (set AEGIS_SMOKE_VOICE_MODEL and AEGIS_SMOKE_VOICE_STEP)');
     }
     const researchModel = process.env.AEGIS_SMOKE_RESEARCH_MODEL?.trim();
     const researchDir = process.env.AEGIS_SMOKE_RESEARCH_DIR?.trim();
@@ -1153,6 +1230,265 @@ async function runRepoScenario(
   await screenshot('17-repo-memory');
   await click('Close task');
 }
+
+/** Duration of a PCM WAV file in seconds (the fixture recordings for the fake microphone). */
+function wavSeconds(file: string): number {
+  const bytes = readFileSync(file);
+  const rate = bytes.readUInt32LE(24);
+  const blockAlign = bytes.readUInt16LE(32);
+  let offset = 12;
+  while (offset + 8 <= bytes.length) {
+    const size = bytes.readUInt32LE(offset + 4);
+    if (bytes.toString('ascii', offset, offset + 4) === 'data') return size / blockAlign / rate;
+    offset += 8 + size + (size % 2);
+  }
+  return 0;
+}
+
+const VOICE_PHRASES: Record<string, string> = {
+  ask: 'In one short sentence, what is the capital of France?',
+  remember: 'Remember that my preferred development workflow uses manual commits.',
+  recall: 'What did I ask you to remember about commits?',
+  correct: 'Correct that memory: this exception applies only to my test repository.',
+  file: 'Organize the files in my downloads folder by type.',
+};
+
+/**
+ * Voice acceptance through the actual UI with a REAL model, REAL local speech recognition and REAL local speech
+ * output. Each step records one utterance with the microphone button:
+ *
+ *   AEGIS_SMOKE_VOICE_SOURCE=fake   Chromium's fake capture device plays AEGIS_SMOKE_VOICE_WAV (a FIXTURE recording,
+ *                                   set up in main.ts) through the real getUserMedia/permission path. One WAV, so
+ *                                   one step, per launch.
+ *   AEGIS_SMOKE_VOICE_SOURCE=mic    the real default microphone hears AEGIS_SMOKE_VOICE_WAV played through the real
+ *                                   speakers (acoustic loop: real capture hardware, synthetic voice).
+ *   AEGIS_SMOKE_VOICE_SOURCE=human  the real microphone records a person for AEGIS_SMOKE_VOICE_SECONDS.
+ *
+ * AEGIS_SMOKE_VOICE_STEP=ask|remember|recall|correct|recall2|file. Launches that share AEGIS_SMOKE_USER_DATA make
+ * remember → (restart) → recall → correct → recall2 a sequence across full application restarts.
+ */
+async function runVoiceScenario(ctx: ChatScenarioContext, step: string, readyState: string): Promise<void> {
+  const { evaluate, record, screenshot, waitForOrb, backend, model } = ctx;
+  const source = process.env.AEGIS_SMOKE_VOICE_SOURCE?.trim() || 'fake';
+  const wav = process.env.AEGIS_SMOKE_VOICE_WAV?.trim() || '';
+  const label = `[voice ${step}/${source}]`;
+  const installed = backend.status.health?.provider?.models ?? [];
+  record(`${label} model ${model} is installed`, installed.includes(model), installed.join(','));
+  if (!installed.includes(model)) return;
+  if (source !== 'human' && !existsSync(wav)) {
+    record(`${label} fixture recording exists`, false, wav);
+    return;
+  }
+  const seconds = source === 'human' ? Number(process.env.AEGIS_SMOKE_VOICE_SECONDS || '7') : wavSeconds(wav) - 0.6;
+
+  const waitFor = async (predicate: () => Promise<boolean>, timeoutMs: number) => {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (await predicate()) return true;
+      await delay(150);
+    }
+    return false;
+  };
+  const phase = () => evaluate<string>(`document.querySelector('section.voice')?.dataset.phase ?? ''`);
+  const orbLog = () => evaluate<string[]>(`window.__orbLog.slice()`);
+  const click = (selector: string, text?: string) =>
+    evaluate<boolean>(`(() => {
+      const el = [...document.querySelectorAll(${JSON.stringify(selector)})]
+        .find((b) => ${text ? `b.textContent.trim() === ${JSON.stringify(text)}` : 'true'});
+      if (!el || el.disabled) return false;
+      el.click();
+      return true;
+    })()`);
+  const lastAssistant = () =>
+    evaluate<string>(`(() => {
+      const items = [...document.querySelectorAll('.message[data-role="assistant"]')];
+      return items[items.length - 1]?.querySelector('.message__text')?.textContent ?? '';
+    })()`);
+  const memories = (query: string, history: boolean) =>
+    evaluate<{ ok: boolean; value?: { memories: { id: string; version: number; status: string; content: string; source: { sourceType: string; detail: string } | null }[] } }>(
+      `window.aegis.listMemories({ query: ${JSON.stringify(query)}, includeHistory: ${history} })`,
+    );
+
+  await waitForOrb(readyState, 15_000);
+  const voiceStatus = await evaluate<{ ok: boolean; value?: { stt: { available: boolean; detail: string }; tts: { available: boolean; detail: string } } }>(
+    `window.aegis.getVoiceStatus()`,
+  );
+  record(
+    `${label} local speech engines available`,
+    !!voiceStatus.ok && !!voiceStatus.value?.stt.available && !!voiceStatus.value?.tts.available,
+    voiceStatus.ok ? `${voiceStatus.value?.stt.detail} | ${voiceStatus.value?.tts.detail}` : JSON.stringify(voiceStatus),
+  );
+  const continuing = step === 'recall' || step === 'correct' || step === 'recall2';
+  if (continuing) {
+    // A full application restart starts with no conversation open: reopen the one the memory was spoken in.
+    await click('.conversations__item');
+    await delay(800);
+  } else {
+    await click('.conversations__new');
+    await delay(200);
+  }
+  await evaluate(`(() => {
+    const select = document.querySelector('#model-select');
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(select, ${JSON.stringify(model)});
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  })()`);
+  await evaluate(`(() => {
+    window.__orbLog = [];
+    window.__levels = { listening: 0, speaking: 0 };
+    const orb = document.querySelector('[data-orb-state]');
+    new MutationObserver(() => window.__orbLog.push(orb.dataset.orbState))
+      .observe(orb, { attributes: true, attributeFilter: ['data-orb-state'] });
+    clearInterval(window.__levelTimer);
+    window.__levelTimer = setInterval(() => {
+      const phase = document.querySelector('section.voice')?.dataset.phase;
+      const bar = document.querySelector('.voice__meter-bar');
+      const m = /scaleX\\(([0-9.]+)\\)/.exec(bar?.style.transform ?? '');
+      const v = m ? Number(m[1]) : 0;
+      if (phase === 'listening' || phase === 'speaking') window.__levels[phase] = Math.max(window.__levels[phase], v);
+    }, 50);
+  })()`);
+  const devices = await evaluate<string[]>(
+    `navigator.mediaDevices.enumerateDevices().then((d) => d.filter((x) => x.kind === 'audioinput').map((x) => x.label || '(no label)'))`,
+  );
+
+  // ---- capture
+  const pressed = Date.now();
+  record(`${label} microphone button starts capture`, await click('.voice__mic'));
+  const listening = await waitFor(async () => (await phase()) === 'listening', 15_000);
+  const indicator = await evaluate<string>(`document.querySelector('.voice__live')?.textContent ?? ''`);
+  record(`${label} real capture: phase listening, orb listening, visible microphone indicator`,
+    listening && (await orbState(evaluate)) === 'listening' && /Microphone on/.test(indicator),
+    `mic opened in ${Date.now() - pressed} ms; devices=${devices.join(' / ')}; indicator="${indicator}"`);
+  if (!listening) return;
+  let player: ChildProcess | null = null;
+  if (source === 'mic') {
+    const ps = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    player = spawn(ps, ['-NoProfile', '-NonInteractive', '-Command',
+      `(New-Object Media.SoundPlayer '${wav.replace(/'/g, "''")}').PlaySync()`], { stdio: 'ignore' });
+  }
+  if (source === 'human') console.log(`[smoke] SPEAK NOW (${seconds}s): "${VOICE_PHRASES[step.replace('2', '')]}"`);
+  await screenshot(`v-${step}-1-listening`);
+  await delay(Math.max(1000, seconds * 1000 - 400));
+  player?.kill();
+  const stopAt = Date.now();
+  record(`${label} Stop ends capture`, await click('.button--record'));
+  const released = await waitFor(async () => (await evaluate<boolean>(`!document.querySelector('.voice__live')`)), 2_000);
+  const levels = await evaluate<{ listening: number; speaking: number }>(`window.__levels`);
+  record(`${label} microphone indicator gone after Stop; live capture level was measured`,
+    released && levels.listening > 0, `max listening level ${levels.listening.toFixed(2)}`);
+
+  // ---- transcription
+  const transcribed = await waitFor(async () => !['transcribing', 'interpreting'].includes(await phase()), 120_000);
+  const transcriptMs = Date.now() - stopAt;
+  record(`${label} orb showed Transcribing`, (await orbLog()).includes('transcribing'), (await orbLog()).join('>'));
+  const metricsLine = () => evaluate<string>(`document.querySelector('.voice__metrics')?.textContent ?? ''`);
+  const afterPhase = await phase();
+  const errorText = await evaluate<string>(`document.querySelector('.voice__error')?.textContent ?? ''`);
+  record(`${label} transcription finished`, transcribed && !errorText, `${transcriptMs} ms after Stop; phase=${afterPhase} ${errorText}`);
+
+  if (step === 'remember' || step === 'correct') {
+    const card = await waitFor(async () => (await phase()) === 'review', 10_000);
+    const cardText = await evaluate<string>(`document.querySelector('.voice__card')?.textContent ?? ''`);
+    record(`${label} memory command is held for review (nothing stored yet)`, card, cardText.slice(0, 300));
+    await screenshot(`v-${step}-2-review`);
+    if (step === 'remember') {
+      const before = await memories('manual commits', false);
+      record(`${label} no memory written before the user confirms`, !!before.ok && before.value!.memories.length === 0,
+        JSON.stringify(before.value?.memories.map((m) => m.content)));
+      const draft = await evaluate<string>(`document.querySelector('#voice-draft')?.value ?? ''`);
+      record(`${label} transcript reads the instruction`, /manual commits?/i.test(draft), draft);
+      await click('.voice__card button', 'Send and remember');
+      const done = await waitForOrb('succeeded', 300_000);
+      record(`${label} remembered turn answered by the real model`, done, (await lastAssistant()).slice(0, 200));
+      const stored = await memories('manual commits', false);
+      const fact = stored.value?.memories[0];
+      record(`${label} stored as the user's active statement with spoken provenance`,
+        !!fact && fact.status === 'active' && fact.source?.sourceType === 'user_message' && /spoken/.test(fact.source.detail),
+        JSON.stringify(fact ?? null));
+    } else {
+      record(`${label} correction targets the remembered memory and is read as an exception`,
+        /manual commits/i.test(cardText) && /exception/i.test(cardText), cardText.slice(0, 300));
+      record(`${label} Apply correction clicked`, await click('.voice__card button', 'Apply correction'));
+      const applied = await waitFor(
+        async () => /version 2/.test(await evaluate<string>(`document.querySelector('.voice__notice')?.textContent ?? ''`)),
+        15_000,
+      );
+      const history = await memories('manual commits', true);
+      const versions = history.value?.memories ?? [];
+      const v2 = versions.find((m) => m.version === 2);
+      const v1 = versions.find((m) => m.version === 1);
+      record(`${label} new active version with voice_command provenance; old version superseded`,
+        applied && v2?.status === 'active' && v2.source?.sourceType === 'voice_command' && v1?.status === 'superseded',
+        JSON.stringify(versions.map((m) => [m.version, m.status, m.source?.sourceType, m.content])));
+      await screenshot(`v-${step}-3-applied`);
+    }
+  } else if (step === 'file') {
+    const routed = await waitFor(async () => !!(await evaluate<string | null>(`document.querySelector('section.task')?.dataset.status ?? null`)), 120_000);
+    const status = await evaluate<string | null>(`document.querySelector('section.task')?.dataset.status ?? null`);
+    record(`${label} spoken request became a file task waiting for the folder picker`, routed && status === 'awaiting_folder', `status=${status}`);
+    const folder = process.env.AEGIS_SMOKE_VOICE_FILE_DIR?.trim();
+    if (folder && existsSync(folder)) {
+      const before = readdirSync(folder).sort().join(',');
+      dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [folder] })) as unknown as typeof dialog.showOpenDialog;
+      await click('section.task button', 'Choose folder…');
+      const planned = await waitFor(async () => (await evaluate<string | null>(`document.querySelector('section.task')?.dataset.status ?? null`)) === 'awaiting_approval', 60_000);
+      const approve = await evaluate<string>(`[...document.querySelectorAll('section.task button')].map((b) => b.textContent).join(' | ')`);
+      record(`${label} plan shown with the trusted Approve button; nothing moved yet`,
+        planned && /Approve and move/.test(approve) && readdirSync(folder).sort().join(',') === before, approve);
+      const micDisabled = await evaluate<boolean>(`document.querySelector('.voice__mic')?.disabled ?? false`);
+      record(`${label} microphone is disabled while the plan waits for approval`, micDisabled);
+      const spoken = await evaluate<{ ok: boolean; value?: { kind: string; reason: string } }>(
+        `window.aegis.interpretVoice({ text: 'Yes, approve the plan and move the files', conversationId: null, lowConfidence: false })`,
+      );
+      record(`${label} a spoken approval is classified as refused`, spoken.value?.kind === 'approval', spoken.value?.reason);
+      await screenshot(`v-${step}-2-approval-required`);
+      await click('section.task button', 'Reject');
+      await delay(1500);
+      record(`${label} after Reject the folder is unchanged`, readdirSync(folder).sort().join(',') === before,
+        readdirSync(folder).join(','));
+    } else {
+      await click('section.task button', 'Cancel');
+    }
+    return;
+  } else {
+    // ask / recall / recall2: an ordinary question is sent without review through the normal routing.
+    const sent = await waitFor(async () => (await evaluate<boolean>(`[...document.querySelectorAll('.message[data-role="user"] .message__who')].some((e) => e.textContent.includes('spoken'))`)), 15_000);
+    const spokenText = await evaluate<string>(`(() => { const u = [...document.querySelectorAll('.message[data-role="user"]')]; return u[u.length - 1]?.querySelector('.message__text')?.textContent ?? ''; })()`);
+    record(`${label} transcript sent as a spoken user message`, sent, spokenText);
+    const answered = await waitFor(async () => (await orbLog()).includes('succeeded') || (await orbLog()).includes('speaking'), 300_000);
+    const reply = await lastAssistant();
+    const meta = await evaluate<string>(`(() => { const a = [...document.querySelectorAll('.message[data-role="assistant"] .message__meta')]; return a[a.length - 1]?.textContent ?? ''; })()`);
+    record(`${label} real model reply`, answered && reply.trim().length > 0, `${meta} :: ${reply.slice(0, 200)}`);
+    const log = await orbLog();
+    record(`${label} orb: transcribing → thinking → responding before any speaking`,
+      log.indexOf('transcribing') < log.indexOf('thinking') && log.indexOf('thinking') < log.indexOf('responding') &&
+        (log.indexOf('speaking') === -1 || log.indexOf('responding') < log.indexOf('speaking')),
+      log.join('>'));
+    if (step === 'recall') record(`${label} recalled memory appears in the answer`, /manual/i.test(reply), reply.slice(0, 200));
+    if (step === 'recall2') record(`${label} corrected memory appears in the answer`, /test repo/i.test(reply), reply.slice(0, 200));
+  }
+
+  // ---- speech output (replies and the correction confirmation are read aloud)
+  const spoke = await waitFor(async () => (await phase()) === 'speaking', 90_000);
+  await screenshot(`v-${step}-4-speaking`);
+  record(`${label} orb Speaking only while audio actually plays`, spoke && (await orbState(evaluate)) === 'speaking',
+    `${await metricsLine()}`);
+  if (step === 'ask' && source !== 'human') {
+    await delay(700);
+    record(`${label} Stop speaking interrupts playback`, await click('.voice button', 'Stop speaking'));
+    const stopped = await waitFor(async () => (await phase()) === 'idle', 3_000);
+    record(`${label} playback stopped (orb cancelled)`, stopped && (await orbLog()).includes('cancelled'), (await orbLog()).slice(-4).join('>'));
+  } else {
+    const ended = await waitFor(async () => (await phase()) === 'idle', 120_000);
+    record(`${label} speech finished`, ended, (await orbLog()).slice(-4).join('>'));
+  }
+  const levels2 = await evaluate<{ listening: number; speaking: number }>(`window.__levels`);
+  record(`${label} live playback level drove the meter`, levels2.speaking > 0, `max speaking level ${levels2.speaking.toFixed(2)}`);
+  console.log(`[smoke] ${label} measurements: ${await metricsLine()} | transcript visible ${transcriptMs} ms after Stop`);
+}
+
+const orbState = (evaluate: <T>(code: string) => Promise<T>) =>
+  evaluate<string | null>(`document.querySelector('[data-orb-state]')?.dataset.orbState ?? null`);
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

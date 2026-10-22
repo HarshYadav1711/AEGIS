@@ -1,5 +1,5 @@
 # PROJECT_CONTEXT.md — Current AEGIS Context Lock
-**Updated:** 2026-10-22 (user-approved roadmap change: integrated memory development, D24). **Status:** Phases 0–3, M0 and M0A committed; roadmap update committed (HEAD `beb4b57`). Phase 4 implemented and verified, NOT committed (awaiting user review).
+**Updated:** 2026-10-22 (user-approved roadmap change: integrated memory development, D24). **Status:** Phases 0–4, M0 and M0A committed (HEAD `e96afb5`). Phase 5 (voice + integrated memory) implemented and verified, NOT committed (awaiting user review).
 
 ## Goal
 Build AEGIS, a genuine Windows-first assistant with original reactive orb, actual model calls, safe file/browser/repo automation, clear approvals, durable state, evidence and measurable evaluation. Reference aesthetic: JARVIS holography + ULTRON energy reactivity + FRIDAY voice minimalism. No copying assets/code. Financial goal: $0 mandatory spend.
@@ -22,7 +22,8 @@ Observed on the user's Windows 11 machine (Node 24.19.0, Python 3.12.0, Ollama 0
 | 3 — Browser research | Committed `2440179` | See below |
 | M0 — Adaptive memory | Committed `e71de65` | See below |
 | M0A — Vault indexing | Committed `24fc13a` | See below |
-| 4 — Repository intelligence (+ integrated memory, D24) | Implemented, uncommitted | See below |
+| 4 — Repository intelligence (+ integrated memory, D24) | Committed `0807c5b`, `e96afb5` | See below |
+| 5 — Voice (+ integrated memory, D24) | Implemented, uncommitted | See below |
 
 Phase 3 verification (2026-10-22):
 - Baseline before edits: pytest 119 passed / 6 skipped; 22 TS tests; Electron smoke all PASS.
@@ -52,6 +53,16 @@ Phase 4 verification (2026-10-22, schema v7):
 - Windows GUI acceptance (real app, real core, `qwen3:4b`, temp profile; only native folder dialogs answered by the harness) on a dedicated sample repo with a fresh vault: 42/42 checks PASS. 395 s end to end (342 s generation, 2475/1324 tokens). Plan shown before any model call; `.env` listed but never opened; injection comment flagged and not obeyed; findings for SQL injection, `shell=True`, bare `except` verified with file:line; 2 mis-cited model claims marked insufficient; outdated project memory ("uses Flask") withheld as contradicted, rejected memory absent, global Ollama lesson used with "applicability not verified"; both consented vault notes (AEGIS-written and user-written) used at their exact SHA-256; report saved outside the repo and hash-checked; SHA-256 of every repo file identical before/after; proposal stored only on click as user statement; verified experience stored with `repo_task` provenance.
 - Model limits observed: missed the `innerHTML` XSS and the LIKE injection in the sample; attached wrong files to one component role; hypothesis reasoning partly weak. ~6 tokens/s generation on this machine.
 - Known gaps: a memory found contradicted stays `active` until the user rejects/corrects it in the Memory panel (no one-click dispute from the report); evidence check confirms quotes exist at cited lines, not that they prove the claim (unrelated citations are flagged only); entry points are name-based (a FastAPI `api.py` is not detected).
+
+Phase 5 verification (2026-10-22, schema v8; faster-whisper 1.2.1 installed with user approval):
+- Baseline before edits: pytest 256 passed / 12 skipped; 37 TS tests; typecheck and lint PASS.
+- After: pytest 316 passed / 12 skipped (52 fixture-engine voice tests, 7 real local-engine tests, 1 core-responsiveness regression); 51 TS tests; typecheck, lint PASS.
+- Engines: faster-whisper `base.en` (already in the local HF cache, CPU int8, never downloaded); Windows SAPI voices David/Zira. Real-engine round trip (SAPI speech → Whisper) transcribed the remember sentence exactly.
+- Windows GUI acceptance (real app, real core, `llama3.2:3b`), microphone = Chromium fake capture device playing SAPI-generated FIXTURE recordings through the real getUserMedia/permission path: A spoken question → transcript → reply "The capital of France is Paris." → audible speech → Stop speaking (all PASS); B remember (held for review, stored only after click, spoken provenance) → full app restart → recall (memory in answer) → restart → spoken correction (resolved to that memory, category exception, applied on click as v2 with `voice_command` provenance, v1 superseded) → restart → recall shows the corrected version (197/197 checks over 4 launches); C spoken "organize my downloads" → file task → plan with Approve button, microphone disabled, spoken approval refused, Reject → folder unchanged (47/47).
+- Real microphone (Realtek array) with the user speaking: transcript "What is Ozzy Ozz-Bond's latest song?" for "…Ozzy Osbourne's…" (proper noun wrong, rest right); reply generated in 2.0 s and heard by the user; no audio file in the profile.
+- Measured on this machine (fake-device runs, 4.7–6.7 s recordings): recognition 1.1–1.5 s (core), transcript on screen 1.4–1.8 s after Stop; model reply 0.9–9.6 s (llama3.2:3b, first call includes load); speech synthesis 0.5–0.7 s, audio starts 0.5–1.1 s after the reply. Real mic: recognition 0.67 s for 6.4 s. Push-to-talk turn-taking, not realtime.
+- Bug found and fixed: the core froze on the first voice call because native DLL initialisation blocked on the stdin pipe that the parent-watch thread was reading; the watch now polls with PeekNamedPipe (regression test in `test_lifecycle.py`).
+- Known limits: English-only model; proper nouns mis-transcribed; "that memory" resolution is lexical and asks the user when ambiguous; exception/temporary are recognised by fixed phrases and change content, not scope or expiry; only the first ~1200 characters of a reply are spoken; brief `idle` flicker on the orb between routing and the chat request (pre-existing); av 19 installed but unused (incompatible with faster-whisper's decoder).
 
 Design (fonts, palette, layout) remains open per D09.
 

@@ -16,7 +16,8 @@ from app.agents.chat import GenerationManager
 from app.agents.file_agent import FileTaskManager, recover_interrupted
 from app.agents.repo_agent import RepoManager
 from app.agents.research_agent import ResearchManager
-from app.api import chat, file_tasks, health, memory, repo_tasks, research_tasks, vaults
+from app.agents.voice import VoiceManager
+from app.api import chat, file_tasks, health, memory, repo_tasks, research_tasks, vaults, voice
 from app.api.security import LocalAuthMiddleware
 from app.config import Settings
 from app.memory import conversations, db
@@ -46,9 +47,12 @@ async def _probe_provider(app: FastAPI, adapter: ModelAdapter) -> None:
 
 
 def create_app(
-    settings: Settings, adapter: ModelAdapter | None = None, fetcher_factory: Any = None
+    settings: Settings, adapter: ModelAdapter | None = None, fetcher_factory: Any = None,
+    voice_manager: VoiceManager | None = None,
 ) -> FastAPI:
     model_adapter: ModelAdapter = adapter or OllamaAdapter(settings.ollama_base_url)
+    # Local speech engines load lazily (the Whisper model on the first transcription); tests inject fixtures.
+    speech: VoiceManager = voice_manager or VoiceManager()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -89,6 +93,7 @@ def create_app(
         yield
         log.info("core shutting down")
         monitor.cancel()
+        await speech.shutdown()
         if app.state.file_tasks is not None:
             await app.state.file_tasks.shutdown()
         if app.state.research is not None:
@@ -118,6 +123,7 @@ def create_app(
     app.state.file_tasks = None
     app.state.research = None
     app.state.repo = None
+    app.state.voice = speech
     app.state.provider_health = None
     app.state.started_monotonic = time.monotonic()
     app.include_router(health.router)
@@ -127,6 +133,7 @@ def create_app(
     app.include_router(repo_tasks.router)
     app.include_router(memory.router)
     app.include_router(vaults.router)
+    app.include_router(voice.router)
     app.add_middleware(LocalAuthMiddleware, token=settings.session_token)
 
     @app.middleware("http")

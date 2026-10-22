@@ -15,6 +15,8 @@ const SOURCE_LABEL: Record<string, string> = {
   memory_ui: 'memory panel',
   file_task: 'file task',
   research_task: 'research task',
+  repo_task: 'repository task',
+  voice_command: 'spoken correction (reviewed)',
 };
 
 function statusLabel(m: MemoryRecord): string {

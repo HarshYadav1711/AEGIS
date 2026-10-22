@@ -199,7 +199,16 @@ export class BackendManager extends EventEmitter<{ status: [BackendStatus] }> {
    * added here and never returned. Rejects with CoreUnavailableError when no
    * core is ready to serve.
    */
-  async request(pathAndQuery: string, init: { method: 'GET' | 'POST'; body?: unknown; signal?: AbortSignal }): Promise<Response> {
+  async request(
+    pathAndQuery: string,
+    init: {
+      method: 'GET' | 'POST';
+      body?: unknown;
+      /** Binary body (a voice recording) instead of JSON, with its fixed content type and request id. */
+      audio?: { bytes: Uint8Array; requestId: string };
+      signal?: AbortSignal;
+    },
+  ): Promise<Response> {
     const core = this.core;
     if (!core || core.port === null || this.current.state === 'offline' || this.current.state === 'error') {
       throw new CoreUnavailableError(this.current.detail);
@@ -207,10 +216,14 @@ export class BackendManager extends EventEmitter<{ status: [BackendStatus] }> {
     if (!pathAndQuery.startsWith('/')) throw new Error('core path must be absolute');
     const headers: Record<string, string> = { Authorization: `Bearer ${core.token}` };
     if (init.body !== undefined) headers['Content-Type'] = 'application/json';
+    if (init.audio !== undefined) {
+      headers['Content-Type'] = 'audio/wav';
+      headers['X-Aegis-Request-Id'] = init.audio.requestId;
+    }
     return fetch(`http://127.0.0.1:${core.port}${pathAndQuery}`, {
       method: init.method,
       headers,
-      body: init.body === undefined ? undefined : JSON.stringify(init.body),
+      body: init.audio !== undefined ? init.audio.bytes : init.body === undefined ? undefined : JSON.stringify(init.body),
       signal: init.signal,
       redirect: 'error',
     });

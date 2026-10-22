@@ -502,6 +502,46 @@ MIGRATIONS: tuple[Migration, ...] = (
             "CREATE INDEX repo_events_task ON repo_events(task_id, id)",
         ),
     ),
+    Migration(
+        version=8,
+        name="voice_input",
+        foreign_keys_off=True,
+        statements=(
+            # Whether a user message was typed or spoken (transcribed locally and shown to the user before sending).
+            # Raw audio is never stored anywhere.
+            "ALTER TABLE messages ADD COLUMN input_mode TEXT NOT NULL DEFAULT 'text' "
+            "CHECK (input_mode IN ('text', 'voice'))",
+            # memory_events gains the 'voice_command' source type (a reviewed spoken memory correction).
+            """
+            CREATE TABLE memory_events_v8 (
+                id              TEXT PRIMARY KEY,
+                kind            TEXT NOT NULL CHECK (kind IN (
+                                    'remember', 'extracted', 'task_outcome', 'added', 'corrected', 'confirmed',
+                                    'rejected', 'deleted', 'refused', 'settings')),
+                source_type     TEXT NOT NULL CHECK (source_type IN (
+                                    'user_message', 'memory_ui', 'file_task', 'research_task', 'repo_task',
+                                    'voice_command')),
+                source_id       TEXT,
+                conversation_id TEXT,
+                detail          TEXT NOT NULL,
+                at              TEXT NOT NULL
+            )
+            """,
+            "INSERT INTO memory_events_v8 SELECT id, kind, source_type, source_id, conversation_id, detail, at "
+            "FROM memory_events",
+            "DROP TABLE memory_events",
+            "ALTER TABLE memory_events_v8 RENAME TO memory_events",
+            """
+            CREATE UNIQUE INDEX memory_events_capture_once ON memory_events(kind, source_type, source_id)
+            WHERE source_id IS NOT NULL AND kind IN ('remember', 'extracted', 'task_outcome')
+            """,
+            # A spoken correction (identified by its client request id) is applied at most once, whatever retries.
+            """
+            CREATE UNIQUE INDEX memory_events_voice_once ON memory_events(source_id)
+            WHERE source_type = 'voice_command'
+            """,
+        ),
+    ),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

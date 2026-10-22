@@ -209,6 +209,51 @@ $env:AEGIS_SMOKE_REPO_OUT = 'D:\samples\reports'; $env:AEGIS_SMOKE_REPO_VAULT_DI
 npm --prefix apps\desktop run smoke
 ```
 
+## Voice (Phase 5)
+
+Push-to-talk above the message box: **Start speaking** opens the microphone (red *Microphone on* indicator, timer and
+level meter, orb **Listening**); **Stop and transcribe** closes it. **Cancel** discards the recording. Capture also
+stops at 60 s, when the device disappears, when the core goes offline and when the window closes or reloads. There is no
+wake word and no background listening.
+
+- **Recognition** is local: faster-whisper with the Whisper `base.en` model that must already be in the Hugging Face
+  cache (`%USERPROFILE%\.cache\huggingface\hub`); AEGIS never downloads it (`local_files_only`, offline mode). The
+  recording (16 kHz mono WAV) goes renderer → Electron main → core in memory and is discarded after transcription; no
+  audio is written to disk or the database. Silence and unusable audio are reported as such, never guessed.
+- **What happens to the transcript** is decided by fixed rules (no model call): ordinary questions are sent through the
+  same routing as typed text (marked *spoken* in the conversation). `Remember …`, `Correct that memory: …`, low-confidence
+  transcripts, spoken deletions and spoken approvals are shown for review first. Voice cannot approve a plan, run a tool or
+  delete a memory; while a plan waits for approval the microphone is disabled.
+- **Spoken corrections** resolve "that memory" to the one the conversation just used or saved (or ask you to choose),
+  propose a new version that keeps your words verbatim, and are applied only when you click **Apply correction**. The
+  old version stays in the memory history as superseded; provenance is `voice_command`.
+- **Speech output** uses the Windows built-in voices (System.Speech through a fixed PowerShell script); the reply is
+  played by the app, and the orb shows **Speaking** only while audio is actually playing. **Stop speaking** (or
+  pressing **Start speaking** again) interrupts it; the composer's **Stop** still cancels a reply that is being
+  generated, before anything is spoken. Only the first ~1200 characters are read.
+- **Microphone permission**: Electron grants only microphone capture to the app page (camera and screen capture stay
+  denied). Windows must also allow desktop apps to use the microphone (Settings → Privacy & security → Microphone);
+  otherwise the app shows *Microphone access was denied*.
+
+Fixture recordings for automated runs (synthetic speech from the local Windows voice, not microphone recordings):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\make-voice-fixtures.ps1 -OutDir $env:TEMP\aegis-voice
+```
+
+GUI acceptance through Chromium's fake capture device (one utterance per launch; reuse `AEGIS_SMOKE_USER_DATA` across
+launches for remember → recall → correct → recall2):
+
+```powershell
+$env:AEGIS_SMOKE_VOICE_MODEL = 'llama3.2:3b'; $env:AEGIS_SMOKE_VOICE_SOURCE = 'fake'
+$env:AEGIS_SMOKE_VOICE_STEP = 'ask'; $env:AEGIS_SMOKE_VOICE_WAV = "$env:TEMP\aegis-voice\ask.wav"
+npm --prefix apps\desktop run smoke
+```
+
+`AEGIS_SMOKE_VOICE_SOURCE=human` records the real default microphone for `AEGIS_SMOKE_VOICE_SECONDS` (default 7) and
+prints the phrase to say; `file` with `AEGIS_SMOKE_VOICE_FILE_DIR=<sample folder>` checks that a spoken file request
+still stops at the trusted approval button.
+
 ## Troubleshooting
 
 - **"The isolated browser could not start"** on a research task: run `scripts\setup.ps1` again

@@ -36,6 +36,7 @@
 
 ## Phases 5–7
 - Mic capture explicit and visible, no background recording by default; voice not high-risk approval.
+- Phase 5 as implemented: Electron's permission handlers grant only audio `media` capture to the app page's main frame (camera, screen capture and everything else denied); capture runs only between the user's Start/Stop (indicator, timer, 60 s cap) and ends on Cancel, device loss, core loss and page teardown, with main cancelling pending voice jobs when the renderer reloads, crashes, closes or the app quits; recordings are validated (16 kHz mono PCM WAV, size) in main and core, decoded in memory and never stored or logged; speech recognition is local (faster-whisper, model from the local cache only, Hugging Face offline mode); transcripts take the same routing as typed text, memory commands are always shown for review, spoken approvals and deletions are refused, and the microphone is disabled while a plan waits for approval; a spoken memory correction is applied only by an explicit click, through the existing revision function, with `voice_command` provenance; TTS runs a fixed PowerShell script with the text as base64 on stdin and an allowlisted voice name.
 - Agent delegation does not transfer wider authority. Check actual tool effect and audit history.
 - Run small adversarial regression suite and dependency/secret scans; document residual risk.
 

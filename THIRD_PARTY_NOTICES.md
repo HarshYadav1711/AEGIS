@@ -45,6 +45,22 @@ Python virtual environment; review them before any redistribution.
 | playwright (Python) | 1.63.0 | Apache-2.0 (NOTICE and ThirdPartyNotices.txt in the installed package) | Phase 3 isolated headless browser for reading approved public pages |
 | greenlet | 3.5.6 (via playwright) | MIT AND PSF-2.0 | Playwright runtime dependency |
 | pyee | 13.0.1 (via playwright) | MIT | Playwright runtime dependency |
+| faster-whisper | 1.2.1 | MIT | Phase 5 local speech recognition (push-to-talk); installed with user approval on 2026-10-22 |
+| ctranslate2 | 4.8.3 (via faster-whisper) | MIT | Whisper inference on the CPU (int8) |
+| onnxruntime | 1.31.0 (via faster-whisper) | MIT | Runs the Silero voice-activity model bundled in faster-whisper |
+| tokenizers | 0.23.3 (via faster-whisper) | Apache-2.0 | Whisper tokenizer |
+| huggingface_hub, hf-xet | 2.2.0, 1.7.0 (via faster-whisper) | Apache-2.0 | Resolves the model in the local cache only (`local_files_only`, `HF_HUB_OFFLINE=1`); no downloads |
+| numpy | 2.5.4 | BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0 | Audio sample arrays |
+| av | 19.0.2 (via faster-whisper) | BSD-3-Clause; the wheel bundles FFmpeg libraries under their own (LGPL) licenses | Installed as a dependency but not used: the core decodes the WAV itself |
+| protobuf, flatbuffers | 7.36.2, 25.12.19 (via onnxruntime) | BSD-3-Clause, Apache-2.0 | onnxruntime dependencies |
+| filelock, fsspec, tqdm | 4.2.4, 2026.9.0, 4.70.1 (via huggingface_hub) | MIT, BSD-3-Clause, MPL-2.0 AND MIT | Not used directly |
+
+### Speech model and voices (on this machine, not in the repository)
+
+| Component | License | Use |
+|---|---|---|
+| Whisper `base.en` converted for CTranslate2 (`Systran/faster-whisper-base.en`, snapshot `3d3d5dee…`) | MIT per its Hugging Face model card (OpenAI Whisper weights are MIT); the card itself is not in the local cache and was not re-read for this phase | Already present in the user's Hugging Face cache; AEGIS loads it with `local_files_only` and never downloads it |
+| Windows built-in SAPI voices (Microsoft David Desktop, Microsoft Zira Desktop) | Part of Windows, used through System.Speech under the Windows license | Local text-to-speech; no voice is bundled or cloned |
 
 ### Downloaded at setup (not in the repository)
 

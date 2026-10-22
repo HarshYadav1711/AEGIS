@@ -7,6 +7,7 @@ import {
   type ChatMessageRecord,
   type ChatProgressEvent,
   type ConversationSummary,
+  type InputMode,
 } from '../shared/contracts';
 
 /** How long a finished state (Done / Cancelled) stays on the orb before it settles to Ready. */
@@ -30,7 +31,13 @@ export interface ChatState {
   loadingConversation: boolean;
   newConversation: () => void;
   openConversation: (id: string) => void;
-  send: (content: string, model: string) => Promise<boolean>;
+  /** `onReply` receives the completed reply (used to read a spoken request's answer aloud). */
+  send: (
+    content: string,
+    model: string,
+    inputMode?: InputMode,
+    onReply?: (reply: ChatMessageRecord) => void,
+  ) => Promise<boolean>;
   cancel: () => void;
 }
 
@@ -128,7 +135,12 @@ export function useChat(coreOnline: boolean): ChatState {
     setMessages((list) => list.map((m) => (m.id === record.id ? record : m)));
 
   const send = useCallback(
-    async (content: string, model: string): Promise<boolean> => {
+    async (
+      content: string,
+      model: string,
+      inputMode: InputMode = 'text',
+      onReply?: (reply: ChatMessageRecord) => void,
+    ): Promise<boolean> => {
       const bridge = window.aegis;
       if (!bridge || inFlightRef.current) return false;
       setError(null);
@@ -148,7 +160,7 @@ export function useChat(coreOnline: boolean): ChatState {
       const requestId = crypto.randomUUID();
       setFlight({ requestId, conversationId, assistantId: null });
       startActivity('thinking');
-      const outcome = await bridge.sendMessage({ conversationId, requestId, content, model });
+      const outcome = await bridge.sendMessage({ conversationId, requestId, content, model, inputMode });
       // Updated by the 'accepted' event handler while the send was awaited.
       const assistantId = (inFlightRef.current as InFlight | null)?.assistantId ?? null;
       setFlight(null);
@@ -158,6 +170,7 @@ export function useChat(coreOnline: boolean): ChatState {
           replaceMessage(outcome.message);
           setActivity('succeeded');
           settleLater();
+          onReply?.(outcome.message);
           break;
         case 'cancelled':
           replaceMessage(outcome.message);

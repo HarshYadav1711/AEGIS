@@ -17,6 +17,7 @@ import socket
 import string
 import sys
 import threading
+import time
 from typing import TextIO
 
 import uvicorn
@@ -29,6 +30,7 @@ READY_PREFIX = "AEGIS_READY "
 TOKEN_LENGTH = 64
 LOOPBACK = "127.0.0.1"
 GRACEFUL_SHUTDOWN_S = 2
+PARENT_POLL_S = 0.25
 
 log = logging.getLogger("aegis.main")
 
@@ -87,10 +89,39 @@ class CoreServer(uvicorn.Server):
             self._out.flush()
 
 
-def watch_parent(stream: TextIO, server: uvicorn.Server) -> None:
+def _windows_pipe(stream: TextIO) -> int | None:
+    if sys.platform != "win32":
+        return None
     try:
-        while stream.read(4096):
-            pass
+        import _winapi
+        import msvcrt
+
+        handle = msvcrt.get_osfhandle(stream.fileno())
+        return handle if _winapi.GetFileType(handle) == _winapi.FILE_TYPE_PIPE else None
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def watch_parent(stream: TextIO, server: uvicorn.Server) -> None:
+    """Shut down when the parent closes our stdin (or dies).
+
+    On Windows the stdin pipe is polled with PeekNamedPipe instead of a blocking read: while a synchronous
+    ReadFile is pending on the stdin handle, native libraries that query the standard handles as their DLLs
+    load (numpy's runtime, first imported when voice is used) block on it and freeze the whole core.
+    """
+    handle = _windows_pipe(stream)
+    try:
+        if handle is not None:
+            import _winapi
+
+            while True:
+                available, _left = _winapi.PeekNamedPipe(handle, 0)  # BrokenPipeError once the parent closed it
+                if available:
+                    os.read(stream.fileno(), available)  # never blocks: the bytes are already there
+                time.sleep(PARENT_POLL_S)
+        else:
+            while stream.read(4096):
+                pass
     except (OSError, ValueError):
         pass
     log.info("parent closed stdin; shutting down")

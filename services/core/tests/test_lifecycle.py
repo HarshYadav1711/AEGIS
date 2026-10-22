@@ -90,3 +90,27 @@ def test_missing_data_dir_refuses_to_start(tmp_path: Path) -> None:
     out, _ = proc.communicate(secrets.token_hex(32) + "\n", timeout=15)
     assert proc.returncode == 2
     assert "AEGIS_READY" not in out
+
+
+def test_core_stays_responsive_when_voice_loads_native_libraries(tmp_path: Path) -> None:
+    """Regression (Phase 5): the first /voice/status imports numpy/ctranslate2. On Windows that froze the whole core
+    while the parent-watch thread held a blocking read on the stdin pipe; the watch now polls the pipe instead."""
+    token = secrets.token_hex(32)
+    proc = _spawn(tmp_path)
+    try:
+        assert proc.stdin and proc.stdout
+        proc.stdin.write(token + "\n")
+        proc.stdin.flush()
+        port = json.loads(proc.stdout.readline().removeprefix("AEGIS_READY "))["port"]
+        request = urllib.request.Request(f"http://127.0.0.1:{port}/voice/status")
+        request.add_header("Authorization", f"Bearer {token}")
+        with urllib.request.urlopen(request, timeout=30) as response:
+            body = json.loads(response.read())
+        assert {"stt", "tts", "limits"} <= set(body)
+        assert _get(port, token) == 200
+        proc.stdin.close()
+        assert proc.wait(timeout=10) == 0
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()

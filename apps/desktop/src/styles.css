@@ -35,6 +35,7 @@
   --orb-idle: 186 214 230;
   --orb-connecting: 236 196 120;
   --orb-listening: 150 220 200;
+  --orb-transcribing: 170 190 250;
   --orb-thinking: 120 200 255;
   --orb-planning: 200 220 160;
   --orb-executing: 255 170 90;
@@ -139,7 +140,8 @@ body {
   gap: var(--space-3);
   padding: var(--space-4) var(--space-6);
   min-height: 0;
-  overflow: hidden;
+  /* Scrolls only when crowded (small window + open plan + voice bar) so no approval button is ever cut off. */
+  overflow-y: auto;
 }
 
 /* With a conversation open the orb shrinks so the transcript gets the room. */
@@ -185,6 +187,7 @@ body {
 .orb[data-orb-state='idle'] { --orb-tint: var(--orb-idle); }
 .orb[data-orb-state='connecting'] { --orb-tint: var(--orb-connecting); }
 .orb[data-orb-state='listening'] { --orb-tint: var(--orb-listening); }
+.orb[data-orb-state='transcribing'] { --orb-tint: var(--orb-transcribing); }
 .orb[data-orb-state='thinking'] { --orb-tint: var(--orb-thinking); }
 .orb[data-orb-state='planning'] { --orb-tint: var(--orb-planning); }
 .orb[data-orb-state='executing'] { --orb-tint: var(--orb-executing); }
@@ -914,3 +917,70 @@ select {
 .finding[data-status='best_practice'] { border-left-color: var(--state-online); }
 .finding[data-status='insufficient_evidence'] { border-left-color: var(--state-starting); }
 .consent { display: flex; gap: 0.5rem; align-items: flex-start; }
+
+/* A plan or report panel keeps a readable height; the stage scrolls instead of squeezing it to its title. */
+.stage > .task { min-height: min(16rem, 45vh); flex-shrink: 0; }
+
+/* Voice (Phase 5): push-to-talk bar, live microphone indicator, transcript review. Provisional, token-based. */
+.voice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: min(100%, 44rem);
+  flex-shrink: 0;
+}
+.voice__bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.button--record {
+  background: var(--state-problem);
+  border-color: var(--state-problem);
+  color: var(--text-on-accent);
+}
+.button--small { padding: 0 var(--space-2); font-size: 0.85em; }
+.voice__live { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--state-problem); font-variant-numeric: tabular-nums; }
+.voice__dot { width: 0.6rem; height: 0.6rem; border-radius: 50%; background: var(--state-problem); }
+.voice__meter {
+  flex: 1 1 6rem;
+  max-width: 10rem;
+  height: 0.4rem;
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-default);
+  overflow: hidden;
+}
+.voice__meter-bar {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: left center;
+}
+.voice__hint, .voice__notice, .voice__error, .voice__reason, .voice__category, .voice__heard { margin: 0; font-size: 0.9em; }
+.voice__hint, .voice__meta { color: var(--text-secondary); }
+.voice__meta { font-size: 0.85em; }
+.voice__error { color: var(--state-problem); }
+.voice__category { font-weight: 600; }
+.voice__card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--state-starting);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+.voice__text {
+  width: 100%;
+  padding: var(--space-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  color: var(--text-primary);
+  font: inherit;
+  resize: vertical;
+}
+.voice__actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.voice__candidates { display: flex; flex-direction: column; gap: var(--space-1); border: 0; padding: 0; margin: 0; }
+.voice__memory { overflow-wrap: anywhere; }
+.voice__settings > summary { cursor: pointer; color: var(--text-secondary); font-size: 0.9em; }
+.voice__grid { display: grid; grid-template-columns: auto 1fr; gap: var(--space-2) var(--space-3); align-items: center; margin: var(--space-2) 0; }
+.voice__check { display: flex; gap: var(--space-2); align-items: flex-start; font-size: 0.9em; margin-top: var(--space-1); }

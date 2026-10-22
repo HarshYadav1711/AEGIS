@@ -5,13 +5,16 @@
 import type { BackendState, BackendStatus } from '../shared/contracts';
 
 /**
- * Visual state vocabulary from Design.md §2, plus `responding`: the model is
- * streaming text. `speaking` stays reserved for real audio (TTS) playback.
+ * Visual state vocabulary from Design.md §2, plus `responding` (the model is
+ * streaming text) and `transcribing` (a finished recording is with the local
+ * speech engine). `speaking` is only ever shown while synthesized audio is
+ * actually playing.
  */
 export type OrbState =
   | 'idle'
   | 'connecting'
   | 'listening'
+  | 'transcribing'
   | 'thinking'
   | 'planning'
   | 'executing'
@@ -27,6 +30,7 @@ export const ORB_STATES: readonly OrbState[] = [
   'idle',
   'connecting',
   'listening',
+  'transcribing',
   'thinking',
   'planning',
   'executing',
@@ -40,13 +44,16 @@ export const ORB_STATES: readonly OrbState[] = [
 ];
 
 /**
- * States that real events can produce (backend lifecycle, conversation requests
- * and Phase 2 file tasks). Everything else is reachable only through the
- * labelled preview.
+ * States that real events can produce (backend lifecycle, conversation requests,
+ * tasks, and since Phase 5 microphone capture, transcription and audio playback).
+ * Anything else is reachable only through the labelled preview.
  */
 export const LIVE_ORB_STATES: readonly OrbState[] = [
   'connecting',
   'idle',
+  'listening',
+  'transcribing',
+  'speaking',
   'thinking',
   'planning',
   'waiting_approval',
@@ -121,27 +128,62 @@ const FROM_ACTIVITY: Record<Exclude<ChatActivity, 'none'>, OrbState> = {
 };
 
 /**
+ * What the voice flow is doing, from real renderer events:
+ * listening    — microphone tracks are live and capturing
+ * transcribing — the recording is with the local speech engine (or its transcript is being classified)
+ * applying     — a reviewed spoken memory correction is being written
+ * speaking     — synthesized audio is actually playing
+ * succeeded / failed / cancelled — how the last voice step ended
+ */
+export type VoiceActivity =
+  | 'none'
+  | 'listening'
+  | 'transcribing'
+  | 'applying'
+  | 'speaking'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled';
+
+const FROM_VOICE: Record<Exclude<VoiceActivity, 'none'>, OrbState> = {
+  listening: 'listening',
+  transcribing: 'transcribing',
+  applying: 'executing',
+  speaking: 'speaking',
+  succeeded: 'succeeded',
+  failed: 'error',
+  cancelled: 'cancelled',
+};
+
+const VOICE_ACTIVE: readonly VoiceActivity[] = ['listening', 'transcribing', 'applying', 'speaking'];
+
+/**
  * Live orb state. Backend problems win (an unreachable core is never shown as
- * busy); then an active file task; then the chat request activity; otherwise
- * `idle` only when a model is actually ready to answer.
+ * busy); then live voice work (capture, transcription, a memory write, audio
+ * playback); then an active task; then the chat request activity; then how the
+ * last voice step ended; otherwise `idle` only when a model is ready to answer.
  */
 export function orbStateFor(
   status: BackendStatus | null,
   activity: ChatActivity,
   chatReady: boolean,
   task: TaskActivity = 'none',
+  voice: VoiceActivity = 'none',
 ): OrbState {
   const backend = orbStateFromBackend(status);
   if (backend !== 'idle') return backend;
+  if (voice !== 'none' && VOICE_ACTIVE.includes(voice)) return FROM_VOICE[voice];
   if (task !== 'none') return FROM_TASK[task];
   if (activity !== 'none') return FROM_ACTIVITY[activity];
+  if (voice !== 'none') return FROM_VOICE[voice];
   return chatReady ? 'idle' : 'error';
 }
 
 export const ORB_LABELS: Record<OrbState, string> = {
   idle: 'Ready',
   connecting: 'Connecting',
-  listening: 'Listening',
+  listening: 'Listening (microphone on)',
+  transcribing: 'Transcribing',
   thinking: 'Thinking',
   planning: 'Planning',
   executing: 'Executing',
@@ -176,6 +218,7 @@ export const ORB_MOTION: Record<OrbState, OrbMotion> = {
   idle:             { spin: 0.18, energy: 0.45, turbulence: 0.05, pulseHz: 0.25, presence: 0.9,  sweep: 0, maxFps: 30 },
   connecting:       { spin: 0.35, energy: 0.35, turbulence: 0.08, pulseHz: 0.6,  presence: 0.75, sweep: 1, maxFps: 45 },
   listening:        { spin: 0.25, energy: 0.6,  turbulence: 0.18, pulseHz: 0.9,  presence: 1,    sweep: 0, maxFps: 60 },
+  transcribing:     { spin: 0.5,  energy: 0.6,  turbulence: 0.1,  pulseHz: 0.7,  presence: 1,    sweep: 1, maxFps: 60 },
   thinking:         { spin: 0.6,  energy: 0.75, turbulence: 0.22, pulseHz: 0.8,  presence: 1,    sweep: 0, maxFps: 60 },
   planning:         { spin: 0.45, energy: 0.65, turbulence: 0.12, pulseHz: 0.5,  presence: 1,    sweep: 1, maxFps: 60 },
   executing:        { spin: 0.9,  energy: 0.9,  turbulence: 0.3,  pulseHz: 1.1,  presence: 1,    sweep: 0, maxFps: 60 },
